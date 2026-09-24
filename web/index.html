@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Políglota · Panel del evento</title>
+<link rel="stylesheet" href="/static/app.css">
+<style>
+  .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; margin-bottom: 22px; }
+  .kpi { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; }
+  .kpi b { display: block; font-size: 26px; font-family: var(--mono); letter-spacing: -.02em; }
+  .kpi span { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+
+  .rooms { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 14px; }
+  .room h3 { margin: 0 0 3px; font-size: 16px; }
+  .room .id { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+  .grid4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 14px 0; }
+  .m { background: var(--panel-2); border-radius: 8px; padding: 8px 9px; text-align: center; }
+  .m b { display: block; font-family: var(--mono); font-size: 15px; }
+  .m span { font-size: 9.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
+  .m b.ok { color: var(--ok); } .m b.warn { color: var(--warn); } .m b.bad { color: var(--bad); }
+  .langs { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 12px; min-height: 22px; }
+  .lchip { font-size: 11px; font-weight: 600; background: var(--panel-2); border-radius: 99px; padding: 3px 9px; }
+  .links { display: flex; gap: 7px; flex-wrap: wrap; }
+  .links .btn { padding: 6px 11px; font-size: 12.5px; }
+  .empty { text-align: center; padding: 56px 20px; color: var(--muted); }
+  dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: var(--radius); padding: 22px; max-width: 460px; width: 92vw; }
+  dialog::backdrop { background: rgba(0,0,0,.6); }
+  .warn-banner { background: color-mix(in srgb, var(--warn) 12%, var(--panel)); border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent); border-radius: 9px; padding: 11px 14px; margin-bottom: 18px; font-size: 13.5px; }
+  @media (max-width: 480px) { .grid4 { grid-template-columns: repeat(2, 1fr); } }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand">Poli<span>glota</span></div>
+  <span class="muted" style="font-size:13px">Panel del evento</span>
+  <div style="margin-left:auto" class="row">
+    <span class="mono muted" style="font-size:12px" id="engines"></span>
+    <button class="primary" id="btnNew">+ Nueva sala</button>
+  </div>
+</header>
+
+<div class="wrap">
+  <div id="banner"></div>
+  <div class="summary" id="summary"></div>
+  <div class="rooms" id="rooms"></div>
+</div>
+
+<dialog id="dlg">
+  <h3 style="margin:0 0 4px">Nueva sala</h3>
+  <p class="muted" style="margin:0 0 18px;font-size:13px">
+    El título y el resumen alimentan el glosario: de ahí salen los términos que el
+    reconocedor no debe errar ni el traductor localizar.
+  </p>
+  <form method="dialog" id="form">
+    <div class="field"><label>Identificador</label><input id="f_id" required placeholder="auditorio" pattern="[a-zA-Z0-9\-]+"></div>
+    <div class="field"><label>Título de la charla</label><input id="f_title" placeholder="Scaling RAG in production"></div>
+    <div class="field"><label>Oradores</label><input id="f_speakers" placeholder="Ada Lovelace"></div>
+    <div class="field"><label>Resumen</label><textarea id="f_abstract" rows="2"></textarea></div>
+    <div class="field">
+      <label>Idioma del orador</label>
+      <select id="f_lang">
+        <option value="en">Inglés</option><option value="es">Español</option>
+        <option value="pt">Portugués</option><option value="auto">Detectar automáticamente</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Motor de reconocimiento</label>
+      <select id="f_asr">
+        <option value="">Por defecto del servidor</option>
+        <option value="gemini">Gemini Live (nube)</option>
+        <option value="whisper">faster-whisper (local)</option>
+        <option value="mock">Mock (demo sin credenciales)</option>
+      </select>
+    </div>
+    <div class="row" style="justify-content:flex-end;margin-top:6px">
+      <button value="cancel">Cancelar</button>
+      <button class="primary" value="ok" id="f_ok">Crear</button>
+    </div>
+  </form>
+</dialog>
+
+<script type="module">
+const LANGS = { es: 'ES', en: 'EN', pt: 'PT', fr: 'FR', it: 'IT', de: 'DE' };
+
+async function tick() {
+  let data;
+  try {
+    data = await (await fetch('/api/rooms')).json();
+  } catch { return; }
+  paint(data.rooms || []);
+}
+
+function fmt(s) {
+  if (s < 60) return Math.round(s) + 's';
+  return Math.floor(s / 60) + 'm ' + String(Math.round(s % 60)).padStart(2, '0') + 's';
+}
+function latClass(ms) { return !ms ? '' : ms < 900 ? 'ok' : ms < 1800 ? 'warn' : 'bad'; }
+
+function paint(rooms) {
+  const viewers = rooms.reduce((a, r) => a + r.viewers, 0);
+  const audio = rooms.reduce((a, r) => a + r.metrics.audio_s, 0);
+  const lats = rooms.map(r => r.metrics.asr_lag_p50).filter(Boolean);
+  const live = rooms.filter(r => r.live).length;
+
+  summary.innerHTML = [
+    ['salas activas', `${live}<span style="font-size:16px;color:var(--muted)"> / ${rooms.length}</span>`],
+    ['espectadores', viewers],
+    ['audio procesado', fmt(audio)],
+    ['retraso mediano', lats.length ? Math.round(lats.reduce((a, b) => a + b) / lats.length) + ' ms' : '—'],
+  ].map(([label, val]) => `<div class="kpi"><b>${val}</b><span>${label}</span></div>`).join('');
+
+  if (!rooms.length) {
+    document.getElementById('rooms').innerHTML =
+      `<div class="empty" style="grid-column:1/-1">
+         <h2 style="font-weight:600;margin:0 0 6px">Ninguna sala todavía</h2>
+         <p>Creá una sala por cada charla que corra en paralelo.</p>
+       </div>`;
+    return;
+  }
+
+  document.getElementById('rooms').innerHTML = rooms.map(r => {
+    const m = r.metrics;
+    const chips = Object.entries(r.viewer_langs).map(([l, n]) =>
+      `<span class="lchip">${LANGS[l] || l.toUpperCase()} · ${n}</span>`).join('') ||
+      '<span class="lchip muted">sin espectadores</span>';
+    return `
+    <div class="card room">
+      <div class="row" style="justify-content:space-between;align-items:flex-start">
+        <div style="min-width:0">
+          <h3>${esc(r.title)}</h3>
+          <div class="id">${esc(r.room)} · ${esc(r.source_lang)} · ${esc(r.asr)} + ${esc(r.mt)}</div>
+        </div>
+        <span class="pill ${r.live ? 'live' : 'idle'}">${r.live ? '● en vivo' : 'sin audio'}</span>
+      </div>
+      <div class="grid4">
+        <div class="m"><b class="${latClass(m.asr_lag_p50)}">${m.asr_lag_p50 || '—'}</b><span>p50 ms</span></div>
+        <div class="m"><b class="${latClass(m.asr_lag_p95)}">${m.asr_lag_p95 || '—'}</b><span>p95 ms</span></div>
+        <div class="m"><b>${m.segments}</b><span>frases</span></div>
+        <div class="m"><b>${fmt(m.audio_s)}</b><span>audio</span></div>
+      </div>
+      <div class="langs">${chips}</div>
+      <div class="links">
+        <a class="btn" href="/capture/${r.room}" target="_blank">🎙️ Capturar</a>
+        <a class="btn" href="/room/${r.room}" target="_blank">Subtítulos</a>
+        <a class="btn" href="/overlay/${r.room}" target="_blank">Overlay</a>
+        <button class="danger" data-del="${esc(r.room)}">Cerrar</button>
+      </div>
+    </div>`;
+  }).join('');
+
+  for (const b of document.querySelectorAll('[data-del]')) {
+    b.onclick = async () => {
+      if (!confirm(`¿Cerrar la sala "${b.dataset.del}"?`)) return;
+      await fetch('/api/rooms/' + b.dataset.del, { method: 'DELETE' });
+      tick();
+    };
+  }
+}
+
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+btnNew.onclick = () => dlg.showModal();
+form.onsubmit = async (e) => {
+  if (e.submitter?.value !== 'ok') return;
+  const body = {
+    id: f_id.value.trim(),
+    title: f_title.value.trim(),
+    speakers: f_speakers.value.trim(),
+    abstract: f_abstract.value.trim(),
+    source_lang: f_lang.value,
+    asr_engine: f_asr.value || null,
+  };
+  const r = await fetch('/api/rooms', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+  });
+  if (!r.ok) alert((await r.json()).detail || 'No se pudo crear la sala');
+  form.reset();
+  tick();
+};
+
+(async () => {
+  const h = await (await fetch('/api/health')).json();
+  engines.textContent = `${h.asr} + ${h.mt}`;
+  if (!h.key_configured && h.asr !== 'whisper') {
+    banner.innerHTML = `<div class="warn-banner">
+      <b>Falta GEMINI_API_KEY.</b> Copiá <code>.env.example</code> a <code>.env</code> y pegá tu key de
+      <a href="https://aistudio.google.com/apikey" target="_blank">AI Studio</a>.
+      Mientras tanto podés crear una sala con el motor <b>Mock</b> para ver el sistema funcionando.
+    </div>`;
+  }
+})();
+
+tick();
+setInterval(tick, 2000);
+</script>
+</body>
+</html>

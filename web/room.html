@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Políglota · Subtítulos</title>
+<link rel="stylesheet" href="/static/app.css">
+<style>
+  body { display: flex; flex-direction: column; height: 100dvh; overflow: hidden; }
+  #feed { flex: 1; overflow-y: auto; padding: 28px 20px 40px; scroll-behavior: smooth; }
+  .lines { max-width: 900px; margin: 0 auto; }
+
+  .line { padding: 12px 0; border-bottom: 1px solid color-mix(in srgb, var(--line) 50%, transparent); }
+  .line:last-child { border-bottom: none; }
+  .line .text { font-size: clamp(20px, 3.4vw, 30px); line-height: 1.38; letter-spacing: -0.01em; }
+  .line.pending .text { color: var(--muted); }
+  .line .src {
+    font-size: 14px; color: var(--muted); margin-top: 7px;
+    padding-left: 12px; border-left: 2px solid var(--line);
+  }
+  .line .who {
+    font-size: 11px; font-weight: 700; color: var(--accent);
+    text-transform: uppercase; letter-spacing: .05em; margin-bottom: 5px;
+  }
+  .line .waiting { opacity: .5; font-style: italic; }
+
+  .empty { text-align: center; color: var(--muted); padding: 80px 20px; }
+  .empty h2 { font-weight: 600; margin: 0 0 8px; }
+
+  footer.bar {
+    border-top: 1px solid var(--line); background: var(--panel);
+    padding: 10px 20px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap;
+    font-size: 13px;
+  }
+  select.lang { width: auto; padding: 7px 11px; font-weight: 600; }
+  .lat { font-family: var(--mono); font-size: 12px; }
+  .lat b { color: var(--ok); }
+  .lat b.warn { color: var(--warn); }
+  .lat b.bad { color: var(--bad); }
+  .toggle { display: flex; align-items: center; gap: 6px; color: var(--muted); cursor: pointer; user-select: none; }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand">Poli<span>glota</span></div>
+  <div style="min-width:0">
+    <div id="title" style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
+    <div id="speakers" class="muted" style="font-size:12px"></div>
+  </div>
+  <div style="margin-left:auto" class="row">
+    <span class="dot" id="dot"></span><span id="live" class="muted" style="font-size:13px">conectando…</span>
+  </div>
+</header>
+
+<div id="feed"><div class="lines" id="lines">
+  <div class="empty" id="empty">
+    <h2>Esperando al orador</h2>
+    <p>Los subtítulos aparecen apenas empiece a hablar.</p>
+  </div>
+</div></div>
+
+<footer class="bar">
+  <label for="lang" style="margin:0">Idioma</label>
+  <select id="lang" class="lang"></select>
+  <label class="toggle"><input type="checkbox" id="showSrc" style="width:auto"> Mostrar original</label>
+  <div class="lat" style="margin-left:auto">retraso <b id="lat">—</b></div>
+</footer>
+
+<script type="module">
+const room = decodeURIComponent(location.pathname.split('/').pop());
+const params = new URLSearchParams(location.search);
+let lang = params.get('lang') || localStorage.getItem('poliglota.lang') || 'es';
+let sourceLang = 'en';
+let ws, lines = new Map();
+
+const LANGS = { es: 'Español', en: 'English', pt: 'Português', fr: 'Français', it: 'Italiano', de: 'Deutsch' };
+const sel = document.getElementById('lang');
+for (const [code, name] of Object.entries(LANGS)) {
+  sel.add(new Option(name, code, false, code === lang));
+}
+document.getElementById('showSrc').checked = localStorage.getItem('poliglota.showSrc') === '1';
+
+function connect() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/ws/view/${room}?lang=${lang}`);
+  ws.onopen = () => setLive('en vivo', 'live');
+  ws.onclose = () => { setLive('reconectando…', 'off'); setTimeout(connect, 1500); };
+  ws.onmessage = ({ data }) => handle(JSON.parse(data));
+}
+
+function setLive(text, cls) {
+  document.getElementById('live').textContent = text;
+  document.getElementById('dot').className = 'dot ' + (cls || '');
+}
+
+function handle(ev) {
+  if (ev.type === 'state') {
+    sourceLang = ev.source_lang || sourceLang;
+    document.getElementById('title').textContent = ev.title || room;
+    document.getElementById('speakers').textContent = ev.speakers || '';
+    return;
+  }
+  if (ev.type === 'segment') return onSegment(ev);
+  if (ev.type === 'translation') return onTranslation(ev);
+}
+
+function onSegment(ev) {
+  document.getElementById('empty')?.remove();
+  const key = ev.final ? ev.seq : 'partial';
+  if (ev.final) {
+    lines.get('partial')?.el.remove();
+    lines.delete('partial');
+  }
+
+  let row = lines.get(key);
+  if (!row) {
+    row = makeRow();
+    lines.set(key, row);
+    document.getElementById('lines').appendChild(row.el);
+  }
+  row.srcText = ev.text;
+  row.speaker = ev.speaker || '';
+  row.final = ev.final;
+  render(row);
+  updateLatency(ev.asr_ms);
+  autoscroll();
+}
+
+function onTranslation(ev) {
+  const row = lines.get(ev.final ? ev.seq : 'partial');
+  if (!row) return;
+  row.tr = { ...row.tr, ...ev.tr };
+  render(row);
+}
+
+function makeRow() {
+  const el = document.createElement('div');
+  el.className = 'line pending';
+  el.innerHTML = '<div class="who"></div><div class="text"></div><div class="src"></div>';
+  return { el, tr: {}, srcText: '', speaker: '', final: false };
+}
+
+function render(row) {
+  const showSrc = document.getElementById('showSrc').checked;
+  const isSource = lang === sourceLang;
+  const translated = row.tr[lang];
+  const main = isSource ? row.srcText : (translated ?? null);
+
+  row.el.className = 'line' + (row.final ? '' : ' pending');
+  row.el.querySelector('.who').textContent = row.speaker ? `Hablante ${row.speaker}` : '';
+  row.el.querySelector('.who').style.display = row.speaker ? '' : 'none';
+
+  const textEl = row.el.querySelector('.text');
+  if (main !== null) {
+    textEl.textContent = main;
+    textEl.classList.remove('waiting');
+  } else {
+    // El original ya llego pero la traduccion viene en camino: mostramos el
+    // original atenuado en vez de dejar la linea en blanco.
+    textEl.textContent = row.srcText;
+    textEl.classList.add('waiting');
+  }
+
+  const srcEl = row.el.querySelector('.src');
+  const wantSrc = showSrc && !isSource && main !== null;
+  srcEl.textContent = wantSrc ? row.srcText : '';
+  srcEl.style.display = wantSrc ? '' : 'none';
+}
+
+function updateLatency(ms) {
+  if (!ms) return;
+  const el = document.getElementById('lat');
+  el.textContent = ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`;
+  el.className = ms < 900 ? '' : ms < 1800 ? 'warn' : 'bad';
+}
+
+function autoscroll() {
+  const feed = document.getElementById('feed');
+  // Si el asistente subio a releer algo, no lo arrastramos de vuelta abajo.
+  const atBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 160;
+  if (atBottom) feed.scrollTop = feed.scrollHeight;
+}
+
+sel.onchange = () => {
+  lang = sel.value;
+  localStorage.setItem('poliglota.lang', lang);
+  if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'lang', lang }));
+  for (const row of lines.values()) render(row);
+};
+document.getElementById('showSrc').onchange = (e) => {
+  localStorage.setItem('poliglota.showSrc', e.target.checked ? '1' : '0');
+  for (const row of lines.values()) render(row);
+};
+
+connect();
+</script>
+</body>
+</html>

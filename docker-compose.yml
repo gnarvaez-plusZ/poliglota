@@ -1,0 +1,10 @@
+services:
+  poliglota:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file: .env
+    environment:
+      POLIGLOTA_ASR: ${POLIGLOTA_ASR:-gemini}
+      POLIGLOTA_MT: ${POLIGLOTA_MT:-gemini}
+    restart: unless-stopped

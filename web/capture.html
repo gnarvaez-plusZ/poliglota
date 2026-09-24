@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Políglota · Captura</title>
+<link rel="stylesheet" href="/static/app.css">
+<style>
+  .meter { height: 10px; background: var(--bg); border: 1px solid var(--line); border-radius: 99px; overflow: hidden; }
+  .meter > i { display: block; height: 100%; width: 0%; background: linear-gradient(90deg, var(--ok), var(--warn)); transition: width .07s linear; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 10px; margin-top: 16px; }
+  .stat { background: var(--panel-2); border-radius: 9px; padding: 10px 12px; }
+  .stat b { display: block; font-size: 19px; font-family: var(--mono); }
+  .stat span { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .sources { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .preview { margin-top: 16px; padding: 14px; background: var(--bg); border: 1px solid var(--line); border-radius: 9px; min-height: 76px; }
+  .preview .partial { color: var(--muted); }
+  @media (max-width: 560px) { .sources { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand">Poli<span>glota</span></div>
+  <span class="muted">Captura de audio</span>
+  <div style="margin-left:auto" class="row">
+    <span class="dot" id="dot"></span><span id="status" class="muted">desconectado</span>
+  </div>
+</header>
+
+<div class="wrap" style="max-width:720px">
+  <div class="card">
+    <h2 style="margin:0 0 4px">Sala <span class="mono" id="roomName"></span></h2>
+    <p class="muted" style="margin:0 0 18px">
+      Elegí la fuente de audio. Para una charla en vivo usá el micrófono de la sala;
+      para probar con una grabación, compartí la pestaña donde suena.
+    </p>
+
+    <details style="margin-bottom:16px">
+      <summary style="cursor:pointer;color:var(--muted);font-size:13px;font-weight:600">
+        Metadatos de la charla (mejoran la precisión)
+      </summary>
+      <div style="margin-top:12px">
+        <div class="field"><label>Título</label><input id="title" placeholder="Scaling RAG in production"></div>
+        <div class="field"><label>Oradores</label><input id="speakers" placeholder="Ada Lovelace, Alan Turing"></div>
+        <div class="field"><label>Resumen</label><textarea id="abstract" rows="2" placeholder="Pegá el abstract: de acá salen los términos técnicos que el reconocedor no debe errar."></textarea></div>
+        <div class="field">
+          <label>Idioma del orador</label>
+          <select id="srcLang">
+            <option value="en">Inglés</option>
+            <option value="es">Español</option>
+            <option value="pt">Portugués</option>
+            <option value="auto">Detectar automáticamente</option>
+          </select>
+        </div>
+        <button id="saveMeta">Aplicar</button>
+      </div>
+    </details>
+
+    <div class="sources">
+      <button id="btnMic" class="primary">🎙️ Micrófono</button>
+      <button id="btnTab">🖥️ Pestaña o sistema</button>
+    </div>
+    <button id="btnStop" disabled style="width:100%;margin-top:10px;justify-content:center">Detener</button>
+
+    <div style="margin-top:18px">
+      <label>Nivel de entrada</label>
+      <div class="meter"><i id="meter"></i></div>
+    </div>
+
+    <div class="stats">
+      <div class="stat"><b id="secs">0s</b><span>audio enviado</span></div>
+      <div class="stat"><b id="kb">0</b><span>KB enviados</span></div>
+      <div class="stat"><b id="rate">16k</b><span>muestreo</span></div>
+    </div>
+
+    <div class="preview">
+      <div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px">Lo que se está reconociendo</div>
+      <div id="preview" class="muted">—</div>
+    </div>
+
+    <div class="row" style="margin-top:16px">
+      <a class="btn" id="linkView" target="_blank">Ver subtítulos ↗</a>
+      <a class="btn" id="linkOverlay" target="_blank">Overlay OBS ↗</a>
+      <a class="btn" href="/">Panel</a>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+const room = decodeURIComponent(location.pathname.split('/').pop());
+const SAMPLE_RATE = 16000;
+roomName.textContent = room;
+linkView.href = `/room/${room}`;
+linkOverlay.href = `/overlay/${room}`;
+
+let ws, ctx, node, stream, sent = 0;
+
+// El worklet corre en el hilo de audio: convierte a PCM16 y lo manda al hilo
+// principal. Se declara inline para que la pagina no dependa de otro archivo.
+const workletSource = `
+class Pcm extends AudioWorkletProcessor {
+  process(inputs) {
+    const ch = inputs[0][0];
+    if (!ch) return true;
+    const pcm = new Int16Array(ch.length);
+    let peak = 0;
+    for (let i = 0; i < ch.length; i++) {
+      const s = Math.max(-1, Math.min(1, ch[i]));
+      if (Math.abs(s) > peak) peak = Math.abs(s);
+      pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+    }
+    this.port.postMessage({ pcm, peak }, [pcm.buffer]);
+    return true;
+  }
+}
+registerProcessor('pcm', Pcm);
+`;
+
+function setStatus(text, cls) {
+  status.textContent = text;
+  dot.className = 'dot ' + (cls || '');
+}
+
+function connect() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/ws/ingest/${room}`);
+  ws.binaryType = 'arraybuffer';
+  ws.onopen = () => { setStatus('transmitiendo', 'live'); sendMeta(); };
+  ws.onclose = () => setStatus('desconectado', 'off');
+  ws.onerror = () => setStatus('error de conexión', 'off');
+}
+
+function sendMeta() {
+  if (ws?.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({
+    type: 'meta',
+    title: title.value.trim(),
+    speakers: speakers.value.trim(),
+    abstract: abstract.value.trim(),
+    source_lang: srcLang.value,
+  }));
+}
+saveMeta.onclick = (e) => { e.preventDefault(); sendMeta(); saveMeta.textContent = 'Aplicado ✓'; setTimeout(() => saveMeta.textContent = 'Aplicar', 1500); };
+
+async function start(getStream) {
+  try {
+    stream = await getStream();
+  } catch (err) {
+    setStatus('permiso denegado', 'off');
+    return;
+  }
+  if (!stream.getAudioTracks().length) {
+    setStatus('esa fuente no trae audio', 'off');
+    return;
+  }
+
+  connect();
+  // Pedir el contexto directamente a 16 kHz deja que el navegador resamplee
+  // con su propio conversor, que es mejor que cualquier cosa hecha a mano.
+  ctx = new AudioContext({ sampleRate: SAMPLE_RATE });
+  rate.textContent = (ctx.sampleRate / 1000) + 'k';
+  await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([workletSource], { type: 'application/javascript' })));
+
+  node = new AudioWorkletNode(ctx, 'pcm');
+  node.port.onmessage = ({ data }) => {
+    meter.style.width = Math.min(100, data.peak * 140) + '%';
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send(data.pcm.buffer);
+      sent += data.pcm.byteLength;
+      kb.textContent = Math.round(sent / 1024);
+      secs.textContent = Math.round(sent / (SAMPLE_RATE * 2)) + 's';
+    }
+  };
+  ctx.createMediaStreamSource(stream).connect(node);
+  // El worklet necesita un destino para que el grafo corra, pero no queremos
+  // que el audio de la sala vuelva a sonar por los parlantes: ganancia cero.
+  const mute = ctx.createGain();
+  mute.gain.value = 0;
+  node.connect(mute).connect(ctx.destination);
+
+  btnMic.disabled = btnTab.disabled = true;
+  btnStop.disabled = false;
+  watchPreview();
+}
+
+function stop() {
+  stream?.getTracks().forEach(t => t.stop());
+  node?.disconnect();
+  ctx?.close();
+  ws?.close();
+  btnMic.disabled = btnTab.disabled = false;
+  btnStop.disabled = true;
+  meter.style.width = '0%';
+  setStatus('detenido', 'off');
+}
+
+// Escucha pasiva de la sala para confirmar que el audio esta llegando a destino.
+function watchPreview() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const view = new WebSocket(`${proto}://${location.host}/ws/view/${room}?lang=${srcLang.value}`);
+  view.onmessage = ({ data }) => {
+    const ev = JSON.parse(data);
+    if (ev.type !== 'segment') return;
+    preview.textContent = ev.text;
+    preview.className = ev.final ? '' : 'partial muted';
+  };
+}
+
+btnMic.onclick = () => start(() => navigator.mediaDevices.getUserMedia({
+  audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: true }
+}));
+btnTab.onclick = () => start(() => navigator.mediaDevices.getDisplayMedia({ video: true, audio: true }));
+btnStop.onclick = stop;
+</script>
+</body>
+</html>
