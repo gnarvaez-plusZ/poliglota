@@ -280,6 +280,21 @@ async def enroll_page() -> FileResponse:
     return _page("enroll.html")
 
 
+@app.get("/qr-enroll")
+async def qr_enroll(request: Request) -> Response:
+    """QR que lleva al registro de voces: cada orador se registra desde su telefono."""
+    import io
+    import qrcode
+    import qrcode.image.svg
+
+    target = f"{str(request.base_url).rstrip('/')}/enroll"
+    img = qrcode.make(target, image_factory=qrcode.image.svg.SvgPathImage, box_size=10, border=2)
+    buf = io.BytesIO()
+    img.save(buf)
+    return Response(content=buf.getvalue(), media_type="image/svg+xml",
+                    headers={"Cache-Control": "public, max-age=3600", "X-Poliglota-Target": target})
+
+
 @app.get("/qr/{room_id}")
 async def qr(room_id: str, request: Request) -> Response:
     """QR que lleva a la vista de subtitulos de la sala.
@@ -357,6 +372,12 @@ def cli() -> None:
         port=settings.port,
         log_level="info",
         ws_max_size=16 * 1024 * 1024,
+        # Al apagar, uvicorn espera a que sus conexiones terminen ANTES de
+        # ejecutar el cierre de la aplicacion. Un espectador con la pestana
+        # abierta mantiene su websocket para siempre, y el proceso quedaba
+        # colgado en "Waiting for background tasks", sin puerto y sin morir.
+        # Con este tope, a los 5 s corta las conexiones y sigue.
+        timeout_graceful_shutdown=5,
     )
 
 

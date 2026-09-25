@@ -20,12 +20,18 @@
   .result .score { font-family: var(--mono); color: var(--muted); font-size: 13px; }
   .steps { color: var(--muted); font-size: 13.5px; line-height: 1.6; }
   .steps b { color: var(--text); }
+  .nav { display: flex; gap: 4px; margin-left: 6px; }
+  .nav a { color: var(--muted); text-decoration: none; font-weight: 600; font-size: 13.5px; padding: 6px 11px; border-radius: 8px; }
+  .nav a:hover, .nav a.active { color: var(--text); background: var(--panel-2); }
 </style>
 </head>
 <body>
 <header class="top">
   <div class="brand">Poli<span>glota</span></div>
-  <span class="muted">Voces registradas</span>
+  <nav class="nav">
+    <a href="/">Panel</a>
+    <a class="active" href="/enroll">Voces</a>
+  </nav>
   <div style="margin-left:auto" class="row">
     <span class="dot" id="dot"></span><span id="status" class="muted">listo</span>
   </div>

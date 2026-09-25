@@ -237,6 +237,10 @@ uv venv && uv pip install -e .
 .venv/bin/poliglota
 ```
 
+Para correrlo con `uvicorn` a mano, agregá `--timeout-graceful-shutdown 5`: sin
+eso, un espectador con la pestaña abierta impide que el proceso muera al
+apagarlo (`.venv/bin/poliglota` ya lo trae puesto).
+
 Abrí <http://localhost:8000>. Con Docker: `cp .env.example .env && docker compose up`.
 
 ### Credenciales
