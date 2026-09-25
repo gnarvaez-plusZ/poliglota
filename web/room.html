@@ -137,6 +137,7 @@ function onTranslation(ev) {
   const row = lines.get(ev.final ? ev.seq : 'partial');
   if (!row) return;
   row.tr = { ...row.tr, ...ev.tr };
+  if (ev.speaker) row.speaker = ev.speaker;
   render(row);
 }
 
@@ -154,7 +155,7 @@ function render(row) {
   const main = isSource ? row.srcText : (translated ?? null);
 
   row.el.className = 'line' + (row.final ? '' : ' pending');
-  row.el.querySelector('.who').textContent = row.speaker ? `Hablante ${row.speaker}` : '';
+  row.el.querySelector('.who').textContent = row.speaker || '';
   row.el.querySelector('.who').style.display = row.speaker ? '' : 'none';
 
   const textEl = row.el.querySelector('.text');

@@ -26,6 +26,7 @@ from .asr.base import Usage
 from .bus import Bus
 from .config import LANGUAGES, settings
 from .gate import SpeechGate
+from .speakers import SpeakerTracker, get_registry
 from .metrics import RoomMetrics
 from .translate import build_translator
 
@@ -63,6 +64,9 @@ class Room:
             sample_width=settings.sample_width,
             threshold=settings.vad_threshold,
         ) if settings.vad_gate else None
+        # Quien habla: se decide localmente sobre el audio que ya pasa por la
+        # sala, contra las huellas registradas. Sin huellas no hace nada.
+        self.tracker = SpeakerTracker(get_registry())
         self.glossary = glossary.build(title=title, abstract=abstract, speakers=speakers)
 
         self._asr_name = asr_engine or settings.asr_engine
@@ -89,6 +93,7 @@ class Room:
         # Ultima version emitida de cada linea final. Permite detectar si el
         # motor corrigio una linea ya mostrada y no reemitir lo identico.
         self._finals: OrderedDict[int, str] = OrderedDict()
+        self._speaker_by_seq: OrderedDict[int, str] = OrderedDict()
         self._history: list[str] = []
         self._last_partial_mt = 0.0
         self._partial_mt_inflight = False
@@ -154,6 +159,7 @@ class Room:
             return
         self._has_source = True
         self.metrics.note_audio(len(pcm), settings.sample_rate, settings.sample_width)
+        self.tracker.feed(pcm)
 
         for piece in (self.gate.feed(pcm) if self.gate else [pcm]):
             self.metrics.note_sent(len(piece), settings.sample_rate, settings.sample_width)
@@ -211,10 +217,19 @@ class Room:
 
             if item.speaker:
                 self._speaker = item.speaker
+            # La huella de voz manda sobre cualquier etiqueta del motor: es la
+            # que tiene nombre. Se vota en cada refresco y se decide por frase.
+            if self.tracker.active:
+                # La huella se calcula en un hilo: con el embedder neuronal son
+                # ~90 ms de CPU, y bloquear el loop frena la bomba de audio hacia
+                # el ASR de todas las salas. Se hace en el hilo aparte y se sigue.
+                self._speaker = await asyncio.to_thread(self.tracker.observe)
 
             self._has_source = True
             self.metrics.note_subtitle()
             if item.is_final:
+                if self.tracker.active:
+                    self._speaker = self.tracker.commit() or self._speaker
                 await self._finalize(item.text.strip(), item.index)
                 continue
 
@@ -245,6 +260,9 @@ class Room:
         if self._finals.get(seq) == text:
             return  # identica a lo ya emitido: no hay nada que decir
         self._finals[seq] = text
+        self._speaker_by_seq[seq] = self._speaker
+        while len(self._speaker_by_seq) > _FINALS_MEMORY:
+            self._speaker_by_seq.popitem(last=False)
         while len(self._finals) > _FINALS_MEMORY:
             self._finals.popitem(last=False)
         if not revision:
@@ -302,6 +320,7 @@ class Room:
                         "final": final,
                         "tr": result.texts,
                         "mt_ms": ms,
+                        "speaker": self._speaker_by_seq.get(seq, self._speaker),
                     }
                 )
         except Exception:
@@ -342,6 +361,9 @@ class Room:
             "mt": self._mt.name if self._mt else self._mt_name,
             "glossary_terms": len(self.glossary.split(", ")) if self.glossary else 0,
             "vad": bool(self.gate),
+            "speaker_id": self.tracker.active,
+            "speakers": self.tracker.registry.names(),
+            "current_speaker": self.tracker.current,
             "metrics": self.metrics.snapshot(),
         }
 

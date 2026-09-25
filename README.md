@@ -93,6 +93,36 @@ Reproducible con `.venv/bin/python tests/test_languages.py`. Hay además otros
 tres idiomas de salida configurados (francés, italiano, alemán) que no están
 medidos.
 
+## Quién habla
+
+Cada hablante registra su voz una vez (`/enroll`: nombre, 12 segundos hablando,
+probar) y desde ahí los subtítulos salen como **`Juan: …`**, **`Pedro: …`** y, para
+cualquier voz no registrada, **`Desconocido: …`**. Sirve para paneles, entrevistas
+y las preguntas del público.
+
+No es la diarización de Gemini, a propósito: medida, multiplica por ocho el
+refresco del subtítulo y devuelve etiquetas anónimas. Esto corre local sobre el
+audio que ya pasa por la sala, no agrega llamadas a la API, y decide por frase
+con una votación sobre ventanas de 3 s. La huella se compara con la
+**dispersión propia** de cada voz registrada: un clip es "Juan" si está a menos
+de N dispersiones de Juan, con N calibrado con datos.
+
+Hay dos embedders:
+
+| | `mfcc` (sin dependencias) | `resemblyzer` (`uv pip install -e ".[voces]"`) |
+|---|---|---|
+| Distingue | hombre / mujer, voces muy distintas | dos voces del mismo registro |
+| Voz registrada reconocida | 11/11 y 11/11 | 11/11 y 11/11 |
+| Voz ajena rechazada (3 s) | **0/26** | **24/26** (100 % con clips de 5 s) |
+| Costo por clip | 5 ms | ~85 ms en CPU |
+
+Medido con tres voces de TTS de Gemini leyendo el mismo texto (Charon, Kore y
+Aoede), registrando dos y probando con tramos que el registro no vio. El
+embedder clásico **no sabe decir "Desconocido"** cuando la voz ajena se parece a
+una registrada: confundió a Aoede con Kore en 26 de 26 tramos. Por eso `auto`
+usa el neuronal si está instalado. En un cambio de hablante, la primera frase
+puede atribuirse al anterior: la ventana de 3 s todavía lo contiene.
+
 ### Lo que medir cambió respecto del diseño inicial
 
 Tres decisiones del diseño original resultaron equivocadas al contrastarlas
@@ -223,6 +253,7 @@ Una sola: `GEMINI_API_KEY`, de Google AI Studio. En modo local
 | `/room/{sala}` | Asistente: subtítulos con selector de idioma |
 | `/overlay/{sala}?qr=1` | OBS o proyector de sala: overlay transparente con QR |
 | `/qr/{sala}` | QR suelto, para proyectar o imprimir |
+| `/enroll` | Registrar las voces de los oradores para que los subtítulos lleven nombre |
 
 ```bash
 scripts/demo.sh                               # dos salas simuladas, sin credenciales
@@ -243,6 +274,7 @@ scripts/feed.py auditorio default --device pulse --lang auto
 .venv/bin/python tests/test_languages.py   # es/en/pt: transcripción y traducción en ambos sentidos
 node tests/test_captions.mjs               # reglas de subtitulado roll-up, con reloj falso
 .venv/bin/python tests/test_gate.py         # compuerta de voz: retiene silencio sin tocar el habla
+.venv/bin/python tests/test_speakers.py     # quién habla: voces sintéticas y de TTS, ambos embedders
 ```
 
 ## API

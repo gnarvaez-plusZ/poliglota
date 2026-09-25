@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Políglota · Voces</title>
+<link rel="stylesheet" href="/static/app.css">
+<style>
+  .meter { height: 10px; background: var(--bg); border: 1px solid var(--line); border-radius: 99px; overflow: hidden; }
+  .meter > i { display: block; height: 100%; width: 0%; background: linear-gradient(90deg, var(--ok), var(--warn)); transition: width .07s linear; }
+  .big { font-size: 44px; font-family: var(--mono); font-weight: 700; text-align: center; padding: 10px 0; letter-spacing: -.02em; }
+  .list { display: flex; flex-direction: column; gap: 8px; }
+  .sp { display: flex; align-items: center; gap: 12px; background: var(--panel-2); border-radius: 9px; padding: 10px 14px; }
+  .sp b { font-size: 16px; }
+  .sp .meta { color: var(--muted); font-size: 12px; }
+  .result { margin-top: 14px; padding: 14px; border-radius: 9px; background: var(--bg); border: 1px solid var(--line); min-height: 60px; }
+  .result .name { font-size: 26px; font-weight: 700; }
+  .result .name.unknown { color: var(--warn); }
+  .result .score { font-family: var(--mono); color: var(--muted); font-size: 13px; }
+  .steps { color: var(--muted); font-size: 13.5px; line-height: 1.6; }
+  .steps b { color: var(--text); }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand">Poli<span>glota</span></div>
+  <span class="muted">Voces registradas</span>
+  <div style="margin-left:auto" class="row">
+    <span class="dot" id="dot"></span><span id="status" class="muted">listo</span>
+  </div>
+</header>
+
+<div class="wrap" style="max-width:720px">
+  <div class="card" style="margin-bottom:16px">
+    <h2 style="margin:0 0 6px">Registrar una voz</h2>
+    <p class="steps" style="margin:0 0 16px">
+      <b>1.</b> Escribí el nombre. <b>2.</b> Tocá grabar y hablá con naturalidad durante
+      12 segundos, como en la charla. <b>3.</b> Probá que te reconozca. Desde ese momento
+      los subtítulos llevan tu nombre; las voces no registradas salen como <b>Desconocido</b>.
+    </p>
+    <div class="field"><label>Nombre</label><input id="name" placeholder="Juan" autocomplete="off"></div>
+    <div class="row">
+      <button id="btnRec" class="primary">🎙️ Grabar 12 s</button>
+      <button id="btnTest">Probar 3 s</button>
+    </div>
+    <div class="big" id="count">&nbsp;</div>
+    <label>Nivel de entrada</label>
+    <div class="meter"><i id="meter"></i></div>
+    <div class="result" id="result"><span class="muted">Tocá "Probar" después de registrar: hablá 3 segundos y te digo quién sos.</span></div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between;margin-bottom:12px">
+      <h3 style="margin:0">Huellas registradas</h3>
+      <span class="muted mono" id="thr" style="font-size:12px"></span>
+    </div>
+    <div class="list" id="list"><span class="muted">cargando…</span></div>
+    <p class="steps" style="margin:14px 0 0">
+      Volver a grabar el mismo nombre <b>refuerza</b> la huella (se promedian los clips).
+      Registrar en el mismo micrófono de la sala mejora mucho el reconocimiento.
+    </p>
+  </div>
+</div>
+
+<script type="module">
+const SAMPLE_RATE = 16000;
+const FRAME_SAMPLES = SAMPLE_RATE / 10;   // 100 ms por bloque
+
+// Mismo worklet que la captura: acumula 100 ms antes de entregar.
+const workletSource = `
+const FRAME = ${FRAME_SAMPLES};
+class Pcm extends AudioWorkletProcessor {
+  constructor() { super(); this.buf = new Int16Array(FRAME); this.n = 0; this.peak = 0; }
+  process(inputs) {
+    const ch = inputs[0][0];
+    if (!ch) return true;
+    for (let i = 0; i < ch.length; i++) {
+      const s = Math.max(-1, Math.min(1, ch[i]));
+      if (Math.abs(s) > this.peak) this.peak = Math.abs(s);
+      this.buf[this.n++] = s < 0 ? s * 0x8000 : s * 0x7fff;
+      if (this.n === FRAME) {
+        this.port.postMessage({ pcm: this.buf, peak: this.peak }, [this.buf.buffer]);
+        this.buf = new Int16Array(FRAME); this.n = 0; this.peak = 0;
+      }
+    }
+    return true;
+  }
+}
+registerProcessor('pcm', Pcm);
+`;
+
+const $ = (id) => document.getElementById(id);
+function setStatus(text, cls) { $('status').textContent = text; $('dot').className = 'dot ' + (cls || ''); }
+
+let ctx, node, stream;
+
+async function openMic() {
+  if (ctx) return;
+  stream = await navigator.mediaDevices.getUserMedia({
+    audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: true }
+  });
+  ctx = new AudioContext({ sampleRate: SAMPLE_RATE });
+  await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([workletSource], { type: 'application/javascript' })));
+  node = new AudioWorkletNode(ctx, 'pcm');
+  ctx.createMediaStreamSource(stream).connect(node);
+  const mute = ctx.createGain(); mute.gain.value = 0;
+  node.connect(mute).connect(ctx.destination);
+}
+
+/** Graba `seconds` de PCM16 y devuelve un solo ArrayBuffer. */
+function record(seconds) {
+  return new Promise((resolve) => {
+    const chunks = [];
+    const total = seconds * 10;
+    let n = 0;
+    const onmsg = ({ data }) => {
+      $('meter').style.width = Math.min(100, data.peak * 140) + '%';
+      chunks.push(new Int16Array(data.pcm));
+      n++;
+      $('count').textContent = Math.ceil((total - n) / 10) + ' s';
+      if (n >= total) {
+        node.port.onmessage = null;
+        $('count').innerHTML = '&nbsp;';
+        $('meter').style.width = '0%';
+        const out = new Int16Array(n * FRAME_SAMPLES);
+        chunks.forEach((c, i) => out.set(c, i * FRAME_SAMPLES));
+        resolve(out.buffer);
+      }
+    };
+    node.port.onmessage = onmsg;
+  });
+}
+
+async function refresh() {
+  const r = await (await fetch('/api/speakers')).json();
+  $('thr').textContent = `margen ${r.margin} · ${r.embedder}`;
+  const list = $('list');
+  list.innerHTML = '';
+  if (!r.speakers.length) {
+    list.innerHTML = '<span class="muted">Ninguna todavía. Todo el mundo sale como "Desconocido".</span>';
+    return;
+  }
+  for (const s of r.speakers) {
+    const el = document.createElement('div');
+    el.className = 'sp';
+    el.innerHTML = `<b></b><span class="meta"></span><button class="danger" style="margin-left:auto;padding:5px 10px;font-size:12px">Olvidar</button>`;
+    el.querySelector('b').textContent = s.name;
+    el.querySelector('.meta').textContent = `${s.seconds}s de voz · ${s.clips} clip${s.clips === 1 ? '' : 's'}`;
+    el.querySelector('button').onclick = async () => {
+      if (!confirm(`¿Olvidar la voz de ${s.name}?`)) return;
+      await fetch('/api/speakers/' + encodeURIComponent(s.name), { method: 'DELETE' });
+      refresh();
+    };
+    list.appendChild(el);
+  }
+}
+
+$('btnRec').onclick = async () => {
+  const name = $('name').value.trim();
+  if (!name) { $('name').focus(); setStatus('falta el nombre', 'off'); return; }
+  try { await openMic(); } catch { setStatus('sin permiso de micrófono', 'off'); return; }
+  $('btnRec').disabled = $('btnTest').disabled = true;
+  setStatus(`grabando a ${name}…`, 'live');
+  const pcm = await record(12);
+  setStatus('guardando…');
+  const r = await fetch('/api/speakers/' + encodeURIComponent(name), { method: 'POST', body: pcm });
+  const j = await r.json();
+  if (!r.ok) { setStatus(j.detail || 'error', 'off'); }
+  else { setStatus(`${j.name}: ${j.seconds}s, ${j.clips} clip(s)`, 'live'); refresh(); }
+  $('btnRec').disabled = $('btnTest').disabled = false;
+};
+
+$('btnTest').onclick = async () => {
+  try { await openMic(); } catch { setStatus('sin permiso de micrófono', 'off'); return; }
+  $('btnRec').disabled = $('btnTest').disabled = true;
+  setStatus('escuchando…', 'live');
+  const pcm = await record(3);
+  const j = await (await fetch('/api/speakers/identify', { method: 'POST', body: pcm })).json();
+  const box = $('result');
+  if (!j.name) {
+    box.innerHTML = `<span class="muted">${j.detail}</span>`;
+  } else {
+    const alt = j.runner_up ? ` · segundo: ${j.runner_up} ${j.runner_score}` : '';
+    box.innerHTML = `<div class="name ${j.known ? '' : 'unknown'}"></div><div class="score"></div>`;
+    box.querySelector('.name').textContent = j.name;
+    box.querySelector('.score').textContent = `distancia ${j.z} dispersiones · similitud ${j.score}${alt}`;
+  }
+  setStatus('listo');
+  $('btnRec').disabled = $('btnTest').disabled = false;
+};
+
+refresh();
+</script>
+</body>
+</html>

@@ -108,9 +108,9 @@ function handle(ev) {
     if (!text) return;
     if (ev.final) {
       if (placed.has(ev.seq)) captions.revise(placed.get(ev.seq), text);
-      else commit(ev.seq, text);
+      else commit(ev.seq, text, ev.speaker);
     } else {
-      captions.setPartial(text);
+      captions.setPartial(text, ev.speaker || null);
     }
     return;
   }

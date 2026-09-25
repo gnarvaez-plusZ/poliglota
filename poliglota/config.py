@@ -62,6 +62,19 @@ class Settings:
     # evento. Con cero, el panel muestra tokens y no inventa dinero.
     cost_per_mtok: float = field(default_factory=lambda: float(_env("POLIGLOTA_COST_PER_MTOK", "0")))
 
+    # Identificacion de hablante por huella de voz. Se activa sola en cuanto hay
+    # al menos una voz registrada. El margen es cuantas "dispersiones propias"
+    # puede alejarse un clip de una voz registrada y seguir siendo ella; mas
+    # alla, la frase sale como "Desconocido". Bajarlo hace mas "Desconocido";
+    # subirlo hace mas confusiones entre registrados. Vacio: cada embedder usa
+    # el suyo, calibrado con datos (2,5 el clasico, 1,7 el neuronal).
+    speaker_margin: float | None = field(
+        default_factory=lambda: float(_env("POLIGLOTA_SPEAKER_MARGIN", "0")) or None
+    )
+    speakers_file: str = field(default_factory=lambda: _env("POLIGLOTA_SPEAKERS_FILE", "data/speakers.json"))
+    # auto | resemblyzer | mfcc. `auto` usa el neuronal si esta instalado.
+    speaker_embedder: str = field(default_factory=lambda: _env("POLIGLOTA_SPEAKER_EMBEDDER", "auto"))
+
     host: str = field(default_factory=lambda: _env("HOST", "0.0.0.0"))
     port: int = field(default_factory=lambda: int(_env("PORT", "8000")))
 

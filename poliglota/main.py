@@ -25,6 +25,7 @@ from pydantic import BaseModel
 
 from .config import LANGUAGES, settings
 from .room import RoomRegistry
+from .speakers import get_registry
 
 logging.basicConfig(
     level=logging.INFO,
@@ -209,6 +210,51 @@ async def ws_view(ws: WebSocket, room_id: str) -> None:
 
 
 # ---------- UI ----------
+
+
+# ---------- hablantes ----------
+
+
+@app.get("/api/speakers")
+async def list_speakers() -> dict:
+    reg = get_registry()
+    return {"speakers": reg.describe(), "margin": reg.margin, "embedder": reg.embedder.name}
+
+
+@app.post("/api/speakers/identify")
+async def identify_speaker(request: Request) -> dict:
+    """Quien habla en el audio del cuerpo (PCM16 16 kHz mono). Para probar el registro."""
+    pcm = await request.body()
+    m = get_registry().identify(pcm)
+    if m is None:
+        return {"name": None, "score": 0.0, "detail": "sin voz suficiente o sin huellas registradas"}
+    return {"name": m.name, "score": round(m.score, 3), "z": round(m.z, 2), "runner_up": m.runner_up,
+            "runner_score": round(m.runner_score, 3), "known": m.known}
+
+
+@app.post("/api/speakers/{name}")
+async def enroll_speaker(name: str, request: Request) -> dict:
+    """Registra (o refuerza) la voz de `name` con el audio del cuerpo (PCM16 16 kHz mono)."""
+    pcm = await request.body()
+    if len(pcm) < settings.sample_rate * settings.sample_width * 3:
+        raise HTTPException(400, "hacen falta al menos 3 segundos de audio")
+    try:
+        vp = get_registry().enroll(name, pcm)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"name": vp.name, "seconds": round(vp.seconds, 1), "clips": vp.clips}
+
+
+@app.delete("/api/speakers/{name}")
+async def forget_speaker(name: str) -> dict:
+    if not get_registry().forget(name):
+        raise HTTPException(404, "no hay una huella con ese nombre")
+    return {"deleted": name}
+
+
+@app.get("/enroll")
+async def enroll_page() -> FileResponse:
+    return _page("enroll.html")
 
 
 @app.get("/qr/{room_id}")
