@@ -257,6 +257,7 @@ def build_embedder(kind: str = "auto") -> Embedder:
 # -------------------------------------------------------------- registro ----
 
 _SUBCLIP_S = 3.0      # la voz registrada se parte en tramos de este largo
+_TIE_RATIO = 0.08     # empate: el actual queda si esta a <8% de distancia del mejor
 
 
 @dataclass
@@ -369,6 +370,13 @@ class SpeakerRegistry:
             d = np.linalg.norm(z - c, axis=1)
             self._centroids[p.name] = c
             self._spreads[p.name] = float(d.mean()) if len(d) > 1 else 0.0
+        # Tope: ninguna voz puede ser mucho mas "ancha" que las demas. Medido con
+        # voces reales, la huella mas dispersa absorbia a las otras: cualquier
+        # clip a distancia media caia dentro de su radio. Con el tope, un
+        # registro desprolijo no se convierte en un iman.
+        if len(self._spreads) > 1:
+            cap = 1.25 * float(np.median(list(self._spreads.values())))
+            self._spreads = {n: min(v, cap) for n, v in self._spreads.items()}
         # Piso de dispersion: nadie puede ser "mas estrecho" que una fraccion de
         # la distancia a su vecino mas cercano. Un registro muy uniforme (leer
         # monotono, o poco audio) subestima cuanto varia una voz real, y sin
@@ -429,29 +437,47 @@ class SpeakerRegistry:
                 self._save()
         return ok
 
-    def identify(self, pcm: bytes) -> Match | None:
+    def identify(self, pcm: bytes, prefer: str | None = None) -> Match | None:
         """Quien habla en este clip, o None si no hay voz para decidir."""
         if not self._prints:
             return None
         f = self.embedder.features(pcm)
         if f is None:
             return None
-        return self.identify_vector(f[0])
+        return self.identify_vector(f[0], prefer=prefer)
 
-    def identify_vector(self, raw: np.ndarray) -> Match:
+    def identify_vector(self, raw: np.ndarray, prefer: str | None = None) -> Match:
+        """Quien esta mas cerca, y si esta lo bastante cerca para tener nombre.
+
+        Se ordena por DISTANCIA cruda al centro de cada voz, no por z. Una
+        version anterior ordenaba por z = distancia / dispersion propia, y eso
+        hacia ganar los empates a la voz mas dispersa —divide por mas—: medido
+        con voces reales, 4 de 12 clips se atribuian al otro hablante. La
+        dispersion propia se usa solo para decidir si el mas cercano esta lo
+        bastante cerca (z <= margen), que es para lo que sirve.
+
+        `prefer`: hablante actual. Si el mejor y el actual estan casi a la misma
+        distancia, se conserva el actual: un empate no justifica cambiar de
+        nombre en pantalla, y la votacion por frase ya decide lo demas.
+        """
         with self._lock:
             z = raw / self._scale
             ranked = []
             for name, c in self._centroids.items():
-                d = float(np.linalg.norm(z - c)) / self._spreads[name]
+                d = float(np.linalg.norm(z - c))
                 # Similitud legible para la interfaz: coseno de los vectores unitarios.
                 cs = float(np.dot(z, c) / ((np.linalg.norm(z) * np.linalg.norm(c)) or 1.0))
-                ranked.append((d, name, cs))
+                ranked.append((d, name, cs, d / self._spreads[name]))
         ranked.sort()
-        d0, best, cs0 = ranked[0]
+        if prefer and len(ranked) > 1 and ranked[0][1] != prefer:
+            cur = next((r for r in ranked if r[1] == prefer), None)
+            if cur is not None and cur[0] <= ranked[0][0] * (1.0 + _TIE_RATIO):
+                ranked.remove(cur)
+                ranked.insert(0, cur)
+        d0, best, cs0, z0 = ranked[0]
         run, cs1 = (ranked[1][1], ranked[1][2]) if len(ranked) > 1 else (None, 0.0)
-        name = best if d0 <= self.margin else UNKNOWN
-        return Match(name, cs0, d0, run, cs1)
+        name = best if z0 <= self.margin else UNKNOWN
+        return Match(name, cs0, z0, run, cs1)
 
 
 # -------------------------------------------------------- en la sala ----
@@ -469,7 +495,10 @@ class SpeakerTracker:
     # Medido: con 3 s la voz ajena se separa mejor que con 2 s, y la votacion por
     # frase absorbe lo que la ventana mas larga tarda en cambiar de hablante.
     window_s = 3.0
-    keep_s = 5.0
+    # 15 s guardados: 3 para identificar y el resto para poder registrar a quien
+    # esta hablando desde el audio de la sala misma (mismo microfono, mismo
+    # canal que despues se va a reconocer).
+    keep_s = 15.0
     min_interval_s = 0.4
     # Con menos audio que esto las estadisticas son ruido: no se decide.
     min_audio_s = 2.0
@@ -482,6 +511,9 @@ class SpeakerTracker:
         self._last = 0.0
         self.current: str = ""
         self.last_score: float = 0.0
+        # Ultima decision completa, para diagnostico: sin esto, un "Desconocido"
+        # en pantalla no dice si fue por poco o por mucho, ni contra quien.
+        self.last: Match | None = None
 
     @property
     def active(self) -> bool:
@@ -503,9 +535,10 @@ class SpeakerTracker:
         tail = bytes(self._buf[-int(SR * 2 * self.window_s):])
         if len(tail) < SR * 2 * self.min_audio_s:
             return self.current
-        m = self.registry.identify(tail)
+        m = self.registry.identify(tail, prefer=self.current or None)
         if m is None:
             return self.current
+        self.last = m
         # Voto ponderado por confianza: cuanto mas cerca del centro (z chico),
         # mas pesa; Desconocido pesa por cuanto se paso del margen.
         w = max(0.1, self.registry.margin - m.z) if m.known else min(2.0, m.z - self.registry.margin + 0.1)
@@ -513,6 +546,10 @@ class SpeakerTracker:
         self.current = max(self._votes.items(), key=lambda kv: kv[1])[0]
         self.last_score = m.score
         return self.current
+
+    def recent_audio(self, seconds: float = 12.0) -> bytes:
+        """Los ultimos segundos de audio de la sala, para registrar a quien habla."""
+        return bytes(self._buf[-int(SR * 2 * seconds):])
 
     def commit(self) -> str:
         """Hablante de la frase que acaba de cerrarse; reinicia los votos."""

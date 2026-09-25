@@ -364,6 +364,11 @@ class Room:
             "speaker_id": self.tracker.active,
             "speakers": self.tracker.registry.names(),
             "current_speaker": self.tracker.current,
+            "speaker_last": (
+                {"name": m.name, "z": round(m.z, 2), "score": round(m.score, 3),
+                 "runner_up": m.runner_up, "runner_score": round(m.runner_score, 3)}
+                if (m := self.tracker.last) else None
+            ),
             "metrics": self.metrics.snapshot(),
         }
 

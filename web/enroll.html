@@ -42,12 +42,12 @@
     <h2 style="margin:0 0 6px">Registrar una voz</h2>
     <p class="steps" style="margin:0 0 16px">
       <b>1.</b> Escribí el nombre. <b>2.</b> Tocá grabar y hablá con naturalidad durante
-      12 segundos, como en la charla. <b>3.</b> Probá que te reconozca. Desde ese momento
+      20 segundos, como en la charla —cuanto más natural y variado, mejor. <b>3.</b> Probá que te reconozca. Desde ese momento
       los subtítulos llevan tu nombre; las voces no registradas salen como <b>Desconocido</b>.
     </p>
     <div class="field"><label>Nombre</label><input id="name" placeholder="Juan" autocomplete="off"></div>
     <div class="row">
-      <button id="btnRec" class="primary">🎙️ Grabar 12 s</button>
+      <button id="btnRec" class="primary">🎙️ Grabar 20 s</button>
       <button id="btnTest">Probar 3 s</button>
     </div>
     <div class="big" id="count">&nbsp;</div>
@@ -64,7 +64,7 @@
     <div class="list" id="list"><span class="muted">cargando…</span></div>
     <p class="steps" style="margin:14px 0 0">
       Volver a grabar el mismo nombre <b>refuerza</b> la huella (se promedian los clips).
-      Registrar en el mismo micrófono de la sala mejora mucho el reconocimiento.
+      <b>Lo que más pesa es el micrófono</b>: registrá con el mismo con el que después se va a hablar. Mejor todavía: desde el panel, con el audio de la sala misma (“Registrar desde la sala”).
     </p>
   </div>
 </div>
@@ -168,7 +168,7 @@ $('btnRec').onclick = async () => {
   try { await openMic(); } catch { setStatus('sin permiso de micrófono', 'off'); return; }
   $('btnRec').disabled = $('btnTest').disabled = true;
   setStatus(`grabando a ${name}…`, 'live');
-  const pcm = await record(12);
+  const pcm = await record(20);
   setStatus('guardando…');
   const r = await fetch('/api/speakers/' + encodeURIComponent(name), { method: 'POST', body: pcm });
   const j = await r.json();

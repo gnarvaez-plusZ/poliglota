@@ -167,6 +167,11 @@ function fmt(s) {
 function latClass(ms) { return !ms ? '' : ms < 900 ? 'ok' : ms < 2000 ? 'warn' : 'bad'; }
 
 function paint(rooms) {
+  // Conservar lo que el operador este escribiendo: la lista se repinta cada 2 s.
+  const typing = {};
+  for (const f of document.querySelectorAll('form.who')) {
+    const v = f.querySelector('input').value; if (v) typing[f.dataset.room] = v;
+  }
   const viewers = rooms.reduce((a, r) => a + r.viewers, 0);
   const audio = rooms.reduce((a, r) => a + r.metrics.audio_s, 0);
   const refresh = rooms.map(r => r.metrics.refresh_p50).filter(Boolean);
@@ -222,7 +227,11 @@ function paint(rooms) {
         ${r.vad && m.silence_saved_pct > 0 ? `<span style="color:var(--ok)">${m.silence_saved_pct}% silencio no enviado</span>` : ''}
         ${m.dropped_chunks ? `<span style="color:var(--warn)">${m.dropped_chunks} fragmentos descartados</span>` : ''}
       </div>
-      <div class="langs">${chips}${r.speaker_id && r.current_speaker ? `<span class="speaking">🎤 ${esc(r.current_speaker)}</span>` : ''}</div>
+      <div class="langs">${chips}${r.speaker_id && r.current_speaker ? `<span class="speaking" title="${r.speaker_last ? `z ${r.speaker_last.z} · segundo: ${esc(r.speaker_last.runner_up || '—')}` : ''}">🎤 ${esc(r.current_speaker)}${r.speaker_last ? ` <span style="opacity:.7">z ${r.speaker_last.z}</span>` : ''}</span>` : ''}</div>
+      <form class="row who" data-room="${esc(r.room)}" style="gap:6px;margin:-4px 0 12px">
+        <input placeholder="¿Quién está hablando? Escribí el nombre" style="flex:1;min-width:160px;padding:7px 10px;font-size:13px">
+        <button type="submit" style="padding:7px 11px;font-size:12.5px" title="Registra la voz con los últimos 12 s de audio de esta sala">Registrar desde la sala</button>
+      </form>
       <div class="links">
         <a class="btn" href="/capture/${r.room}" target="_blank">🎙️ Capturar</a>
         <a class="btn" href="/room/${r.room}" target="_blank">Subtítulos</a>
@@ -233,6 +242,19 @@ function paint(rooms) {
     </div>`;
   }).join('');
 
+  for (const f of document.querySelectorAll('form.who')) {
+    if (typing[f.dataset.room]) f.querySelector('input').value = typing[f.dataset.room];
+    f.onsubmit = async (e) => {
+      e.preventDefault();
+      const name = f.querySelector('input').value.trim();
+      if (!name) return;
+      const r = await fetch(`/api/rooms/${f.dataset.room}/speakers/${encodeURIComponent(name)}`, { method: 'POST' });
+      const j = await r.json();
+      alert(r.ok ? `${j.name}: ${j.seconds}s de voz, ${j.clips} clip(s). Desde ahora sale con nombre.` : (j.detail || 'no se pudo'));
+      if (r.ok) f.querySelector('input').value = '';
+      tick();
+    };
+  }
   for (const b of document.querySelectorAll('[data-del]')) {
     b.onclick = async () => {
       if (!confirm(`¿Cerrar la sala "${b.dataset.del}"?`)) return;

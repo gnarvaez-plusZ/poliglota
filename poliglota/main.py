@@ -268,6 +268,29 @@ async def enroll_speaker(name: str, request: Request) -> dict:
     return {"name": vp.name, "seconds": round(vp.seconds, 1), "clips": vp.clips}
 
 
+@app.post("/api/rooms/{room_id}/speakers/{name}")
+async def enroll_from_room(room_id: str, name: str) -> dict:
+    """Registra a quien esta hablando AHORA en la sala, con su propio audio.
+
+    Es el flujo real de un evento: alguien empieza a hablar, sale como
+    Desconocido, y el operador dice "este es Nate". Como el audio es el de la
+    sala, la huella queda en el mismo microfono y el mismo canal con que
+    despues se la va a reconocer, que es lo que mas pesa en el resultado.
+    """
+    room = rooms.get(room_id)
+    if not room:
+        raise HTTPException(404, "Sala inexistente")
+    pcm = room.tracker.recent_audio(12.0)
+    if len(pcm) < settings.sample_rate * settings.sample_width * 6:
+        raise HTTPException(400, "todavia no hay 6 segundos de audio en la sala: dejalo hablar un poco mas")
+    try:
+        vp = get_registry().enroll(name, pcm)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    room.tracker.current = vp.name
+    return {"name": vp.name, "seconds": round(vp.seconds, 1), "clips": vp.clips, "room": room.id}
+
+
 @app.delete("/api/speakers/{name}")
 async def forget_speaker(name: str) -> dict:
     if not get_registry().forget(name):
