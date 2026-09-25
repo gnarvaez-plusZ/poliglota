@@ -124,12 +124,26 @@ class GeminiLiveASR:
         # lineas nuevas tienen que continuar la numeracion, no pisarla.
         base = 0
 
+        # Primer fragmento de audio de cada sesion. Se lo espera ANTES de
+        # conectar: el servidor aborta con `1008 policy violation` una sesion que
+        # no recibe audio, y medido tarda unos 60 segundos en hacerlo. Una sala
+        # creada antes de que empiece la charla se pasaba conectando y muriendo
+        # en vacio, y si el orador arrancaba justo en una ventana muerta el
+        # primer subtitulo llegaba 17 segundos tarde en vez de 2.
+        first: bytes | None = None
+
         while not stop:
             # Ultimo texto que mando el modelo y ultima version entregada de cada
             # linea. El modelo REVISA lo que ya dijo, asi que una linea puede
             # cambiar despues de haberse emitido.
             sent: dict[int, str] = {}
             speaker = ""
+
+            if first is None:
+                first = await audio.get()
+                if first is None:
+                    break
+
             try:
                 cfg = self._config(source_lang, hints)
                 if handle:
@@ -139,9 +153,12 @@ class GeminiLiveASR:
                     log.info("transcribe-live conectado (%s, reanudado=%s)", self.model, bool(handle))
 
                     async def pump() -> None:
-                        nonlocal stop
+                        nonlocal stop, first
+                        chunk = first
+                        first = None
                         while True:
-                            chunk = await audio.get()
+                            if chunk is None:
+                                chunk = await audio.get()
                             if chunk is None:
                                 stop = True
                                 await session.send_realtime_input(audio_stream_end=True)
@@ -152,6 +169,7 @@ class GeminiLiveASR:
                                     data=chunk, mime_type=f"audio/pcm;rate={settings.sample_rate}"
                                 )
                             )
+                            chunk = None
 
                     pump_task = asyncio.create_task(pump())
 
