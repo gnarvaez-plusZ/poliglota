@@ -63,7 +63,7 @@
   <label for="lang" style="margin:0">Idioma</label>
   <select id="lang" class="lang"></select>
   <label class="toggle"><input type="checkbox" id="showSrc" style="width:auto"> Mostrar original</label>
-  <div class="lat" style="margin-left:auto">retraso <b id="lat">—</b></div>
+  <div class="lat" style="margin-left:auto">actualiza cada <b id="lat">—</b></div>
 </footer>
 
 <script type="module">
@@ -122,7 +122,7 @@ function onSegment(ev) {
   row.speaker = ev.speaker || '';
   row.final = ev.final;
   render(row);
-  updateLatency(ev.asr_ms);
+  markRefresh();
   autoscroll();
 }
 
@@ -167,11 +167,24 @@ function render(row) {
   srcEl.style.display = wantSrc ? '' : 'none';
 }
 
-function updateLatency(ms) {
-  if (!ms) return;
-  const el = document.getElementById('lat');
-  el.textContent = ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`;
-  el.className = ms < 900 ? '' : ms < 1800 ? 'warn' : 'bad';
+// Medimos el intervalo real entre actualizaciones de subtitulo, que es lo que
+// la audiencia percibe. El retraso punta a punta no es medible en vivo: el
+// modelo no expone tiempos por palabra para alinear texto con audio.
+let lastTick = 0, gaps = [];
+function markRefresh() {
+  const now = performance.now();
+  if (lastTick) {
+    const gap = now - lastTick;
+    if (gap < 5000) {
+      gaps.push(gap);
+      if (gaps.length > 20) gaps.shift();
+      const med = [...gaps].sort((a, b) => a - b)[Math.floor(gaps.length / 2)];
+      const el = document.getElementById('lat');
+      el.textContent = `${Math.round(med)} ms`;
+      el.className = med < 900 ? '' : med < 2000 ? 'warn' : 'bad';
+    }
+  }
+  lastTick = now;
 }
 
 function autoscroll() {

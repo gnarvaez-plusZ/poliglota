@@ -95,19 +95,19 @@ function fmt(s) {
   if (s < 60) return Math.round(s) + 's';
   return Math.floor(s / 60) + 'm ' + String(Math.round(s % 60)).padStart(2, '0') + 's';
 }
-function latClass(ms) { return !ms ? '' : ms < 900 ? 'ok' : ms < 1800 ? 'warn' : 'bad'; }
+function latClass(ms) { return !ms ? '' : ms < 900 ? 'ok' : ms < 2000 ? 'warn' : 'bad'; }
 
 function paint(rooms) {
   const viewers = rooms.reduce((a, r) => a + r.viewers, 0);
   const audio = rooms.reduce((a, r) => a + r.metrics.audio_s, 0);
-  const lats = rooms.map(r => r.metrics.asr_lag_p50).filter(Boolean);
+  const refresh = rooms.map(r => r.metrics.refresh_p50).filter(Boolean);
   const live = rooms.filter(r => r.live).length;
 
   summary.innerHTML = [
     ['salas activas', `${live}<span style="font-size:16px;color:var(--muted)"> / ${rooms.length}</span>`],
     ['espectadores', viewers],
     ['audio procesado', fmt(audio)],
-    ['retraso mediano', lats.length ? Math.round(lats.reduce((a, b) => a + b) / lats.length) + ' ms' : '—'],
+    ['refresco mediano', refresh.length ? Math.round(refresh.reduce((a, b) => a + b) / refresh.length) + ' ms' : '—'],
   ].map(([label, val]) => `<div class="kpi"><b>${val}</b><span>${label}</span></div>`).join('');
 
   if (!rooms.length) {
@@ -134,10 +134,15 @@ function paint(rooms) {
         <span class="pill ${r.live ? 'live' : 'idle'}">${r.live ? '● en vivo' : 'sin audio'}</span>
       </div>
       <div class="grid4">
-        <div class="m"><b class="${latClass(m.asr_lag_p50)}">${m.asr_lag_p50 || '—'}</b><span>p50 ms</span></div>
-        <div class="m"><b class="${latClass(m.asr_lag_p95)}">${m.asr_lag_p95 || '—'}</b><span>p95 ms</span></div>
-        <div class="m"><b>${m.segments}</b><span>frases</span></div>
-        <div class="m"><b>${fmt(m.audio_s)}</b><span>audio</span></div>
+        <div class="m"><b class="${latClass(m.refresh_p50)}">${m.refresh_p50 || '—'}</b><span>refresco ms</span></div>
+        <div class="m"><b class="${latClass(m.ttft_ms)}">${m.ttft_ms || '—'}</b><span>1er texto ms</span></div>
+        <div class="m"><b class="${m.mt_failures ? 'bad' : ''}">${m.mt_p50 || '—'}</b><span>traducc. ms</span></div>
+        <div class="m"><b>${m.tokens_per_audio_min || '—'}</b><span>tok/min audio</span></div>
+      </div>
+      <div class="row" style="gap:14px;font-size:11.5px;color:var(--muted);margin:-6px 0 12px">
+        <span>${m.segments} frases</span><span>${fmt(m.audio_s)} de audio</span>
+        ${m.mt_failures ? `<span style="color:var(--bad)">${m.mt_failures} traducciones caidas</span>` : ''}
+        ${m.mt_retries ? `<span style="color:var(--warn)">${m.mt_retries} reintentos</span>` : ''}
       </div>
       <div class="langs">${chips}</div>
       <div class="links">

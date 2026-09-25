@@ -3,9 +3,8 @@
 **Subtitulado y traducción simultánea en tiempo real para conferencias multi-sala.**
 
 Una charla entra como audio en vivo. Sale como subtítulos en el idioma original y
-traducidos a los idiomas que la audiencia esté pidiendo en ese momento, con un
-retraso de menos de un segundo respecto del orador. Varias salas corren en
-paralelo en el mismo proceso.
+traducidos a los idiomas que la audiencia esté pidiendo en ese momento. Varias
+salas corren en paralelo en el mismo proceso.
 
 Construido para la [Nerdearla Vibeathon 2026](https://nerdearla26.devpost.com/).
 
@@ -14,15 +13,9 @@ Construido para la [Nerdearla Vibeathon 2026](https://nerdearla26.devpost.com/).
 ## Por qué existe
 
 En una conferencia con sesiones en paralelo, la accesibilidad lingüística es un
-problema de logística, no de modelos. Contratar intérpretes simultáneos para cada
-sala no escala, y los subtituladores automáticos genéricos fallan justo donde
-más importa: la jerga técnica. Un ASR sin contexto escribe *"cuber netes"*, y un
-traductor sin contexto convierte *"garbage collector"* en *"recolector de basura"*
-en medio de una charla de JVM.
-
-Políglota ataca las dos cosas: **ceba el reconocimiento con el vocabulario de la
-charla** y **traduce con el contexto de las frases anteriores**, manteniendo un
-glosario de términos que no se traducen.
+problema de logística, no de modelos. Contratar intérpretes simultáneos para
+cada sala no escala, y un subtitulador genérico falla justo donde más importa:
+la jerga técnica y la consistencia de terminología a lo largo de una charla.
 
 ## Cómo funciona
 
@@ -37,33 +30,84 @@ glosario de términos que no se traducen.
                       └──────────────────────┘
 ```
 
-1. **Ingesta.** Cualquier fuente abre un WebSocket y empuja PCM16 mono de 16 kHz.
-   Hay tres clientes listos: captura desde el navegador (micrófono o pestaña),
-   un alimentador por `ffmpeg` para archivos y streams, y cualquier cosa que
-   hable WebSocket.
-2. **Reconocimiento.** El audio va a un motor de ASR en streaming, cebado con el
-   glosario de la charla. Los parciales salen a pantalla mientras el orador habla.
+1. **Ingesta.** Cualquier fuente abre un WebSocket y empuja PCM16 mono de 16 kHz:
+   captura desde el navegador (micrófono o pestaña), un alimentador por `ffmpeg`
+   para archivos y streams, o cualquier cosa que hable WebSocket.
+2. **Reconocimiento.** El audio va a `gemini-3.5-transcribe-live` en streaming.
+   Las palabras aparecen mientras el orador habla y se corrigen solas.
 3. **Traducción.** Cada frase cerrada se traduce **a todos los idiomas activos en
-   una sola llamada**, con las frases anteriores como contexto.
+   una sola llamada**, con las frases anteriores como contexto y un glosario que
+   impide localizar la jerga.
 4. **Distribución.** Un bus pub/sub por sala reparte a N espectadores. Un
    espectador lento nunca frena a los demás.
 
-### Las tres decisiones que definen el resultado
+## Números medidos
+
+Sobre 50 s de charla técnica real, contra la API de producción:
+
+| | Una sala | Dos salas simultáneas |
+|---|---|---|
+| Primer subtítulo | **2,0 s** | 2,1 – 5,2 s |
+| Refresco del subtítulo | **~490 ms** | 443 – 466 ms |
+| Traducción (es + pt, una llamada) | **~780 ms** | 0,8 – 1,5 s |
+| Jerga técnica reconocida | **10/10** | 10/10 |
+
+Reproducibles con `.venv/bin/python tests/test_live.py`.
+
+### Lo que medir cambió respecto del diseño inicial
+
+Tres decisiones del diseño original resultaron equivocadas al contrastarlas
+contra la API real. Quedan anotadas porque el camino importa tanto como el
+resultado:
+
+**El glosario no mejora el reconocimiento.** La idea era inyectar la jerga de la
+charla como `adaptation_phrases` para que el modelo no escribiera *"cuber netes"*.
+Medido: la configuración mínima acertó **10 de 10** términos (Kubernetes, Kafka,
+eBPF, gRPC, P99…) con 1,7 s hasta el primer texto; agregar el sesgo de
+vocabulario no mejoró la precisión y **triplicó la latencia inicial** (5,9 s).
+El modelo ya conoce ese vocabulario. El glosario quedó donde sí aporta: en el
+traductor, para que *"garbage collector"* no se vuelva *"recolector de basura"*
+en una charla de JVM. El sesgo de ASR sigue disponible con
+`POLIGLOTA_ASR_ADAPTATION=1` para nombres propios que el modelo no pueda conocer.
+
+**La diarización cuesta demasiado.** Etiquetar quién habla multiplicó por ocho el
+intervalo de refresco (490 ms → 2728 ms). Para un panel puede valer la pena;
+para una charla no. Queda apagada, tras `POLIGLOTA_ASR_DIARIZATION=1`.
+
+**El buffer de audio era el verdadero problema de latencia.** Con dos salas, el
+primer subtítulo tardaba 27 s. Parecía un límite de cuota del proveedor. Era una
+cola de audio de 256 chunks: si la sesión tardaba en establecerse, se acumulaban
+**25 segundos de audio viejo** y el sistema arrancaba transcribiendo el pasado.
+Acotarla a 5 s bajó el arranque a **2,1 s**, trece veces mejor. En subtitulado en
+vivo es preferible perder una frase a quedar medio minuto atrás del orador; el
+audio descartado se reporta en el panel para que el operador se entere.
+
+## Decisiones de diseño
 
 **El original no espera a la traducción.** El texto en el idioma de origen se
-publica apenas sale del ASR; la traducción llega después como un parche sobre el
-mismo número de secuencia. El subtítulo aparece a la velocidad del reconocimiento,
-no a la del traductor.
+publica apenas sale del reconocedor; la traducción llega después como un parche
+sobre el mismo número de línea. El subtítulo aparece a la velocidad del
+reconocimiento, no a la del traductor.
+
+**Cada línea tiene identidad estable.** El modelo no solo agrega texto: reescribe
+lo que ya dijo cuando se corrige. Si cada revisión fuera una línea nueva, la
+misma frase aparecería cinco veces en pantalla. Cada oración se identifica por su
+posición en la charla, así una corrección **actualiza** la línea en vez de
+duplicarla.
 
 **Se traduce solo a los idiomas con público.** Una sala sin espectadores en
-francés no gasta un token en francés. El costo sigue a la demanda real, y todos
-los idiomas de una frase salen en una única llamada: traducir a cinco cuesta casi
-lo mismo que a uno.
+francés no gasta un token en francés, y todos los idiomas de una frase salen en
+una única llamada: traducir a cinco cuesta casi lo mismo que a uno.
 
-**Las charlas duran más que las sesiones.** El límite de sesión de audio de la
-Live API es de 15 minutos; una charla dura 45. Se resuelve con compresión de
-ventana de contexto y reanudación de sesión: el servidor avisa antes de cortar y
-el pipeline reconecta con el handle vigente sin perder el hilo.
+**Las charlas duran más que las sesiones.** El límite de sesión de audio es de 15
+minutos; una charla dura 45. Se resuelve con compresión de ventana de contexto y
+reanudación de sesión, renumerando las líneas para que la charla continúe sin
+pisar lo ya emitido.
+
+**Un proveedor saturado no puede callar la sala.** Bajo carga la API devolvió
+`429` y `503` de forma habitual. El traductor reintenta con espera creciente,
+baja a modelos de respaldo y aplica un cortacircuitos por modelo. Si todo falla,
+la audiencia sigue viendo el idioma original.
 
 ## Motores intercambiables
 
@@ -71,11 +115,13 @@ Se eligen por variable de entorno, sin tocar código:
 
 | | Nube (por defecto) | Local |
 |---|---|---|
-| **ASR** | Gemini Live API | `faster-whisper` |
-| **Traducción** | Gemini Flash | Gemma vía Ollama |
+| **ASR** | `gemini-3.5-transcribe-live` | `faster-whisper` |
+| **Traducción** | `gemini-3.5-flash-lite` | Gemma vía Ollama |
 | **Necesita** | `GEMINI_API_KEY` | GPU recomendada |
 | **Costo** | por minuto de audio | cero |
-| **Sirve para** | máxima calidad y latencia | sedes sin internet estable |
+
+Hay además un motor `mock` que reproduce una charla escrita: permite correr el
+sistema entero, y los tests, sin credenciales ni red.
 
 ## Arranque rápido
 
@@ -88,20 +134,12 @@ uv venv && uv pip install -e .
 .venv/bin/poliglota
 ```
 
-Abrí <http://localhost:8000>.
-
-Con Docker:
-
-```bash
-cp .env.example .env         # pegá tu GEMINI_API_KEY
-docker compose up
-```
+Abrí <http://localhost:8000>. Con Docker: `cp .env.example .env && docker compose up`.
 
 ### Credenciales
 
-Una sola: `GEMINI_API_KEY`, de Google AI Studio. Es gratuita para el tier de
-desarrollo. En modo local (`POLIGLOTA_ASR=whisper`, `POLIGLOTA_MT=gemma`) no hace
-falta ninguna.
+Una sola: `GEMINI_API_KEY`, de Google AI Studio. En modo local
+(`POLIGLOTA_ASR=whisper`, `POLIGLOTA_MT=gemma`) no hace falta ninguna.
 
 ## Uso
 
@@ -112,19 +150,17 @@ falta ninguna.
 | `/room/{sala}` | Asistente: subtítulos con selector de idioma |
 | `/overlay/{sala}` | OBS: overlay transparente para el stream |
 
-### Demo de dos salas simultáneas
-
 ```bash
-scripts/demo.sh
+scripts/demo.sh                               # dos salas simuladas, sin credenciales
+scripts/feed.py auditorio charla.mp4 --lang en --title "Scaling RAG"
+scripts/feed.py track-2 https://ejemplo.com/stream.m3u8 --lang en
 ```
 
-Levanta dos salas con audio real en paralelo y abre el panel.
-
-### Alimentar una sala desde un archivo o stream
+## Pruebas
 
 ```bash
-scripts/feed.py auditorio charla.mp4 --lang en --title "Scaling RAG in production"
-scripts/feed.py track-2 https://ejemplo.com/stream.m3u8 --lang en
+.venv/bin/python tests/test_pipeline.py   # pipeline completo, motor mock, sin credenciales
+.venv/bin/python tests/test_live.py       # contra la API real, dos salas, audio real
 ```
 
 ## API
@@ -137,6 +173,15 @@ DELETE /api/rooms/{id}          cerrar sala
 WS     /ws/ingest/{id}          entrada de audio (PCM16 16 kHz mono)
 WS     /ws/view/{id}?lang=es    salida de subtítulos (JSON)
 ```
+
+## Sobre la métrica de latencia
+
+El panel muestra **refresco del subtítulo** y **tiempo hasta el primer texto**,
+no un "retraso punta a punta". El modelo acepta `word_timestamp` pero nunca
+devuelve los tiempos por palabra, así que no hay forma de alinear una palabra del
+subtítulo con el instante del audio que la originó. Cualquier retraso punta a
+punta mostrado en vivo sería inventado, y una versión anterior de este panel lo
+mostraba. Se prefiere reportar menos y que sea cierto.
 
 ## Licencia
 

@@ -20,8 +20,21 @@ class Settings:
     asr_engine: str = field(default_factory=lambda: _env("POLIGLOTA_ASR", "gemini"))
     mt_engine: str = field(default_factory=lambda: _env("POLIGLOTA_MT", "gemini"))
 
-    live_model: str = field(default_factory=lambda: _env("POLIGLOTA_LIVE_MODEL", "gemini-3.8-live"))
-    mt_model: str = field(default_factory=lambda: _env("POLIGLOTA_MT_MODEL", "gemini-flash-latest"))
+    live_model: str = field(default_factory=lambda: _env("POLIGLOTA_LIVE_MODEL", "gemini-3.5-transcribe-live"))
+    # Ambas medidas como contraproducentes en charlas tecnicas: el sesgo de
+    # vocabulario no mejoro la precision y triplico la latencia inicial, y la
+    # diarizacion multiplico por ocho el intervalo de refresco. Ver README.
+    asr_adaptation: bool = field(default_factory=lambda: _env("POLIGLOTA_ASR_ADAPTATION", "0") == "1")
+    asr_diarization: bool = field(default_factory=lambda: _env("POLIGLOTA_ASR_DIARIZATION", "0") == "1")
+    mt_model: str = field(default_factory=lambda: _env("POLIGLOTA_MT_MODEL", "gemini-3.5-flash-lite"))
+    # Respaldos ante saturacion del modelo preferido, en orden de preferencia.
+    mt_fallbacks: tuple[str, ...] = field(
+        default_factory=lambda: tuple(
+            m.strip() for m in _env(
+                "POLIGLOTA_MT_FALLBACKS", "gemini-flash-lite-latest,gemini-flash-latest"
+            ).split(",") if m.strip()
+        )
+    )
 
     whisper_model: str = field(default_factory=lambda: _env("POLIGLOTA_WHISPER_MODEL", "small"))
     whisper_device: str = field(default_factory=lambda: _env("POLIGLOTA_WHISPER_DEVICE", "auto"))

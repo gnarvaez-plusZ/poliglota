@@ -11,6 +11,9 @@ class TranslationResult:
     texts: dict[str, str] = field(default_factory=dict)
     # Tokens informados por el motor. Cero en los motores locales, que no facturan.
     tokens: int = 0
+    # Reintentos que costo obtener este resultado. Se vigila en el panel: si sube,
+    # el proveedor esta saturado y conviene bajar de modelo.
+    retries: int = 0
 
     def __bool__(self) -> bool:
         return bool(self.texts)

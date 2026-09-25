@@ -11,3 +11,5 @@ samples/*.wav
 samples/*.mp3
 samples/*.m4a
 .DS_Store
+.tmp/
+dev/

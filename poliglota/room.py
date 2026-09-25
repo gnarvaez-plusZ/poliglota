@@ -15,9 +15,10 @@ Decisiones de diseno que sostienen la latencia y el costo:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
-from collections import Counter
+from collections import Counter, OrderedDict
 
 from . import glossary
 from .asr import build_asr
@@ -29,8 +30,9 @@ from .translate import build_translator
 
 log = logging.getLogger("poliglota.room")
 
-_PARTIAL_MT_INTERVAL = 1.0   # no traducir parciales mas seguido que esto
+_PARTIAL_MT_INTERVAL = 1.5   # no traducir parciales mas seguido que esto
 _CONTEXT_SEGMENTS = 3        # cuantos finales previos viajan como contexto
+_FINALS_MEMORY = 400         # lineas recordadas para detectar correcciones
 
 
 class Room:
@@ -61,13 +63,25 @@ class Room:
         self._asr = None
         self._mt = None
 
-        self._audio: asyncio.Queue = asyncio.Queue(maxsize=256)
+        # 50 chunks = 5 segundos de audio. El tamano es una decision, no un
+        # numero al azar: si el motor tarda en conectar o se atrasa, esta cola
+        # es todo el pasado que el sistema puede llegar a mostrar. Con 256
+        # chunks (25 s) una sesion lenta hacia que el subtitulo arrancara
+        # transcribiendo medio minuto viejo. En subtitulado en vivo es preferible
+        # perder una frase a quedar media charla atras del orador.
+        self._audio: asyncio.Queue = asyncio.Queue(maxsize=50)
         self._transcripts: asyncio.Queue = asyncio.Queue(maxsize=256)
         self._tasks: list[asyncio.Task] = []
+        # Traducciones en vuelo. Se rastrean para poder cancelarlas: una con
+        # reintentos en curso dejaba el apagado colgado indefinidamente.
+        self._jobs: set[asyncio.Task] = set()
 
         self._seq = 0
         self._partial = ""
         self._speaker = ""
+        # Ultima version emitida de cada linea final. Permite detectar si el
+        # motor corrigio una linea ya mostrada y no reemitir lo identico.
+        self._finals: OrderedDict[int, str] = OrderedDict()
         self._history: list[str] = []
         self._last_partial_mt = 0.0
         self._partial_mt_inflight = False
@@ -90,15 +104,25 @@ class Room:
         log.info("Sala %s arriba (asr=%s, mt=%s)", self.id, self._asr.name, self._mt.name)
         self._publish_state()
 
-    async def stop(self) -> None:
+    async def stop(self, timeout: float = 5.0) -> None:
         if not self.running:
             return
         self.running = False
-        await self._audio.put(None)
-        for t in self._tasks:
-            t.cancel()
-        await asyncio.gather(*self._tasks, return_exceptions=True)
+        with contextlib.suppress(asyncio.QueueFull):
+            self._audio.put_nowait(None)
+
+        pending = [*self._tasks, *self._jobs]
+        for task in pending:
+            task.cancel()
+        if pending:
+            # Un motor remoto puede demorar en soltar su socket. Se le da un
+            # margen y despues se sigue: apagar el evento no puede quedar a
+            # merced de que un proveedor conteste.
+            _, stuck = await asyncio.wait(pending, timeout=timeout)
+            if stuck:
+                log.warning("Sala %s: %d tarea(s) no cerraron en %.0fs", self.id, len(stuck), timeout)
         self._tasks.clear()
+        self._jobs.clear()
         log.info("Sala %s detenida", self.id)
 
     async def _run_asr(self) -> None:
@@ -128,6 +152,7 @@ class Room:
         except asyncio.QueueFull:
             # Si el ASR se atrasa, preferimos perder audio viejo antes que
             # acumular un retraso que crece sin techo frente al orador.
+            self.metrics.dropped_chunks += 1
             try:
                 self._audio.get_nowait()
                 self._audio.put_nowait(pcm)
@@ -174,33 +199,49 @@ class Room:
                 self.metrics.note_asr_usage(item.total_tokens)
                 continue
 
-            if item.lag_ms:
-                self.metrics.note_asr(item.lag_ms)
             if item.speaker:
                 self._speaker = item.speaker
 
             self._has_source = True
+            self.metrics.note_subtitle()
             if item.is_final:
-                await self._finalize(item.text.strip() or self._partial, item.lag_ms)
+                await self._finalize(item.text.strip(), item.index)
                 continue
 
-            # El motor siempre manda la frase completa en curso: solo reemplazamos.
+            # El motor manda la frase completa en curso: solo reemplazamos.
             self._partial = item.text.strip()
             if self._partial:
-                self.bus.publish(self._segment_event(self._partial, False, item.lag_ms))
-                self._maybe_translate_partial()
+                seq = item.index if item.index >= 0 else self._seq
+                self.bus.publish(self._segment_event(self._partial, False, seq=seq))
+                self._maybe_translate_partial(seq)
 
-    async def _finalize(self, text: str, lag_ms: int) -> None:
+    async def _finalize(self, text: str, index: int = -1) -> None:
         text = text.strip()
         self._partial = ""
         if not text:
             return
-        seq = self._seq
-        self._seq += 1
-        self.metrics.segments_final += 1
+
+        # Si el motor numera las lineas, mandamos eso: una correccion suya llega
+        # con el mismo seq y el espectador ve la linea corregirse, no duplicarse.
+        if index >= 0:
+            seq = index
+            revision = self._finals.get(seq) is not None
+            self._seq = max(self._seq, seq + 1)
+        else:
+            seq = self._seq
+            self._seq += 1
+            revision = False
+
+        if self._finals.get(seq) == text:
+            return  # identica a lo ya emitido: no hay nada que decir
+        self._finals[seq] = text
+        while len(self._finals) > _FINALS_MEMORY:
+            self._finals.popitem(last=False)
+        if not revision:
+            self.metrics.segments_final += 1
 
         # El original sale ya. La traduccion parchea este mismo seq cuando llegue.
-        self.bus.publish(self._segment_event(text, True, lag_ms, seq=seq))
+        self.bus.publish(self._segment_event(text, True, seq=seq))
 
         self._history.append(text)
         del self._history[:-_CONTEXT_SEGMENTS]
@@ -208,9 +249,9 @@ class Room:
 
         targets = self.active_targets()
         if targets:
-            asyncio.create_task(self._translate(seq, text, targets, final=True))
+            self._spawn(self._translate(seq, text, targets, final=True))
 
-    def _maybe_translate_partial(self) -> None:
+    def _maybe_translate_partial(self, seq: int) -> None:
         now = time.time()
         if self._partial_mt_inflight or now - self._last_partial_mt < _PARTIAL_MT_INTERVAL:
             return
@@ -219,7 +260,13 @@ class Room:
             return
         self._last_partial_mt = now
         self._partial_mt_inflight = True
-        asyncio.create_task(self._translate(self._seq, self._partial, targets, final=False))
+        self._spawn(self._translate(seq, self._partial, targets, final=False))
+
+    def _spawn(self, coro) -> None:
+        """Lanza una traduccion en paralelo sin perderle el rastro."""
+        task = asyncio.create_task(coro)
+        self._jobs.add(task)
+        task.add_done_callback(self._jobs.discard)
 
     async def _translate(self, seq: int, text: str, targets: list[str], *, final: bool) -> None:
         t0 = time.time()
@@ -233,7 +280,7 @@ class Room:
                 glossary=self.glossary,
             )
             ms = int((time.time() - t0) * 1000)
-            self.metrics.note_mt(ms, ok=bool(result))
+            self.metrics.note_mt(ms, ok=bool(result), retries=result.retries)
             if result.tokens:
                 self.metrics.note_mt_usage(result.tokens)
             if result.texts:
@@ -256,7 +303,7 @@ class Room:
 
     # ---------- salida ----------
 
-    def _segment_event(self, text: str, final: bool, lag_ms: int, seq: int | None = None) -> dict:
+    def _segment_event(self, text: str, final: bool, seq: int | None = None) -> dict:
         return {
             "type": "segment",
             "room": self.id,
@@ -264,7 +311,6 @@ class Room:
             "final": final,
             "lang": self.source_lang,
             "text": text,
-            "asr_ms": lag_ms,
             "speaker": self._speaker,
             "t": time.time(),
         }

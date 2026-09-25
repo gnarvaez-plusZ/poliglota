@@ -22,6 +22,10 @@ class Transcript:
     # que ya habia entrado al sistema cuando el motor lo emitio.
     lag_ms: int = 0
     lang: str = ""
+    # Indice estable de la linea dentro de la charla. El motor lo asigna cuando
+    # puede: asi una revision del modelo ACTUALIZA la linea en vez de agregar
+    # una nueva. -1 significa "que la sala lleve la cuenta".
+    index: int = -1
     # Etiqueta de hablante cuando el motor hace diarizacion. En un panel o en
     # las preguntas del publico, saber quien habla cambia la lectura.
     speaker: str = ""

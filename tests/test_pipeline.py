@@ -81,7 +81,7 @@ async def main() -> int:
         check("los finales numeran secuencial",
               [e["seq"] for e in finals_a] == list(range(len(finals_a))),
               str([e["seq"] for e in finals_a]))
-        check("reporta latencia de asr", all(e["asr_ms"] > 0 for e in segs_a))
+        check("no inventa latencia punta a punta", all("asr_ms" not in e for e in segs_a))
         check("el estado inicial llega primero", a[0].get("type") == "state", a[0].get("type", "?"))
 
         print("\n== Aislamiento entre salas ==")
