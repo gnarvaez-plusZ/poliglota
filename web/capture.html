@@ -90,6 +90,8 @@
 <script type="module">
 const room = decodeURIComponent(location.pathname.split('/').pop());
 const SAMPLE_RATE = 16000;
+// 100 ms por envío: 10 mensajes por segundo en vez de 125.
+const FRAME_SAMPLES = SAMPLE_RATE / 10;
 roomName.textContent = room;
 linkView.href = `/room/${room}`;
 linkOverlay.href = `/overlay/${room}`;
@@ -99,18 +101,34 @@ let ws, ctx, node, stream, sent = 0;
 // El worklet corre en el hilo de audio: convierte a PCM16 y lo manda al hilo
 // principal. Se declara inline para que la pagina no dependa de otro archivo.
 const workletSource = `
+// El worklet entrega bloques de 128 muestras: a 16 kHz son 8 ms. Mandarlos de a
+// uno serían 125 mensajes por segundo, y cada uno termina en una llamada aparte
+// a la API, que se atraganta. Se acumulan hasta 100 ms —el mismo tamaño que usa
+// el alimentador por ffmpeg— antes de enviarlos.
+const FRAME = ${FRAME_SAMPLES};
+
 class Pcm extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this.buf = new Int16Array(FRAME);
+    this.n = 0;
+    this.peak = 0;
+  }
+
   process(inputs) {
     const ch = inputs[0][0];
     if (!ch) return true;
-    const pcm = new Int16Array(ch.length);
-    let peak = 0;
     for (let i = 0; i < ch.length; i++) {
       const s = Math.max(-1, Math.min(1, ch[i]));
-      if (Math.abs(s) > peak) peak = Math.abs(s);
-      pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+      if (Math.abs(s) > this.peak) this.peak = Math.abs(s);
+      this.buf[this.n++] = s < 0 ? s * 0x8000 : s * 0x7fff;
+      if (this.n === FRAME) {
+        this.port.postMessage({ pcm: this.buf, peak: this.peak }, [this.buf.buffer]);
+        this.buf = new Int16Array(FRAME);
+        this.n = 0;
+        this.peak = 0;
+      }
     }
-    this.port.postMessage({ pcm, peak }, [pcm.buffer]);
     return true;
   }
 }
@@ -118,8 +136,10 @@ registerProcessor('pcm', Pcm);
 `;
 
 function setStatus(text, cls) {
-  status.textContent = text;
-  dot.className = 'dot ' + (cls || '');
+  // Por id, no por variable global: `window.status` es una propiedad heredada
+  // de tipo string y pisa al elemento, así que asignarle textContent falla.
+  document.getElementById('status').textContent = text;
+  document.getElementById('dot').className = 'dot ' + (cls || '');
 }
 
 function connect() {
