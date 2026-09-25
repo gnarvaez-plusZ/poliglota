@@ -15,6 +15,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
 from pathlib import Path
 
 import uvicorn
@@ -38,10 +39,32 @@ WEB = Path(__file__).resolve().parent.parent / "web"
 rooms = RoomRegistry()
 
 
+# Tareas propias del pipeline, por nombre. Son las unicas que el apagado barre:
+# tocar las de uvicorn en medio de su propio cierre lo rompe.
+_OWN_TASK_PREFIXES = ("asr:", "consume:", "mt:")
+
+
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
     yield
     await rooms.shutdown()
+
+    # uvicorn cierra el puerto y despues espera a TODAS las tareas del loop.
+    # Si el cierre de una sesion con el modelo se cuelga (pasa cuando la
+    # conexion ya murio del otro lado), el proceso queda para siempre en
+    # "Waiting for background tasks" sin puerto: un zombi que nadie ve. Se
+    # cancelan las tareas propias que sobrevivieron, se les da un margen, y si
+    # aun asi no sueltan, el proceso sale por la fuerza. Un operador que pulsa
+    # Ctrl+C tiene que ver morir el servidor.
+    own = [t for t in asyncio.all_tasks()
+           if t is not asyncio.current_task() and (t.get_name() or "").startswith(_OWN_TASK_PREFIXES)]
+    for t in own:
+        t.cancel()
+    if own:
+        _, stuck = await asyncio.wait(own, timeout=3.0)
+        if stuck:
+            log.warning("%d tarea(s) no cerraron tras cancelarlas; salida forzada en 2s", len(stuck))
+            asyncio.get_running_loop().call_later(2.0, os._exit, 0)
 
 
 app = FastAPI(title="Poliglota", version="0.1.0", lifespan=lifespan)

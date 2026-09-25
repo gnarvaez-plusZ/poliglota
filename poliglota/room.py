@@ -292,7 +292,7 @@ class Room:
 
     def _spawn(self, coro) -> None:
         """Lanza una traduccion en paralelo sin perderle el rastro."""
-        task = asyncio.create_task(coro)
+        task = asyncio.create_task(coro, name=f"mt:{self.id}")
         self._jobs.add(task)
         task.add_done_callback(self._jobs.discard)
 
