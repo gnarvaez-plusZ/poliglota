@@ -34,6 +34,8 @@ class RoomMetrics:
         # Audio descartado por atraso del motor. Si sube, el subtitulo
         # se esta quedando atras y el operador tiene que enterarse.
         self.dropped_chunks = 0
+        # Audio que la compuerta de voz retuvo por ser silencio.
+        self.audio_seconds_sent = 0.0
         # Tokens informados por el motor, no estimados: es lo que se factura.
         self.asr_tokens = 0
         self.mt_tokens = 0
@@ -48,6 +50,9 @@ class RoomMetrics:
         if self._first_audio is None:
             self._first_audio = time.time()
         self.audio_seconds += n_bytes / (sample_rate * sample_width)
+
+    def note_sent(self, n_bytes: int, sample_rate: int, sample_width: int) -> None:
+        self.audio_seconds_sent += n_bytes / (sample_rate * sample_width)
 
     def note_subtitle(self) -> None:
         """Una actualizacion de subtitulo llego a los espectadores."""
@@ -83,8 +88,24 @@ class RoomMetrics:
         ordered = sorted(values)
         return ordered[min(int(q * len(ordered)), len(ordered) - 1)]
 
+    def cost_usd_per_hour(self, usd_per_mtok: float) -> float:
+        """Costo proyectado de UNA sala por hora de charla.
+
+        Se calcula sobre el consumo real observado, no sobre una estimacion.
+        Si no hay tarifa cargada devuelve cero y el panel no muestra dinero:
+        inventar un precio seria peor que no mostrarlo.
+        """
+        if not usd_per_mtok or self.audio_seconds < 30:
+            return 0.0
+        tokens_per_hour = (self.asr_tokens + self.mt_tokens) / (self.audio_seconds / 3600)
+        return tokens_per_hour / 1_000_000 * usd_per_mtok
+
     def snapshot(self) -> dict:
+        from .config import settings
+
+        usd_h = self.cost_usd_per_hour(settings.cost_per_mtok)
         return {
+            "usd_per_hour": round(usd_h, 3),
             "uptime_s": round(time.time() - self.started, 1),
             "audio_s": round(self.audio_seconds, 1),
             "segments": self.segments_final,
@@ -97,6 +118,11 @@ class RoomMetrics:
             "mt_failures": self.translation_failures,
             "mt_retries": self.translation_retries,
             "dropped_chunks": self.dropped_chunks,
+            "audio_sent_s": round(self.audio_seconds_sent, 1),
+            "silence_saved_pct": (
+                round(100 * (1 - self.audio_seconds_sent / self.audio_seconds))
+                if self.audio_seconds > 5 else 0
+            ),
             "asr_tokens": self.asr_tokens,
             "mt_tokens": self.mt_tokens,
             "tokens_per_audio_min": (

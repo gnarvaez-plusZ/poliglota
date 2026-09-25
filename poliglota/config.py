@@ -42,6 +42,18 @@ class Settings:
     ollama_host: str = field(default_factory=lambda: _env("OLLAMA_HOST", "http://localhost:11434"))
     gemma_model: str = field(default_factory=lambda: _env("POLIGLOTA_GEMMA_MODEL", "gemma3:4b"))
 
+    # Compuerta de voz: retiene el silencio para no pagar por transcribirlo.
+    # APAGADA por defecto. Sobre habla continua no ahorra nada (medido: 0% en
+    # una charla sin pausas) y toca el camino del audio, que es de donde sale la
+    # precision. Su valor esta en la sala abierta sin nadie hablando: armado,
+    # cambio de orador, coffee break. Encenderla para eventos de jornada larga.
+    vad_gate: bool = field(default_factory=lambda: _env("POLIGLOTA_VAD", "0") == "1")
+    vad_threshold: float = field(default_factory=lambda: float(_env("POLIGLOTA_VAD_THRESHOLD", "0.006")))
+    # Precio por millon de tokens, en USD. Queda en cero a proposito: el precio
+    # de lista cambia y depende del contrato, asi que lo carga quien opera el
+    # evento. Con cero, el panel muestra tokens y no inventa dinero.
+    cost_per_mtok: float = field(default_factory=lambda: float(_env("POLIGLOTA_COST_PER_MTOK", "0")))
+
     host: str = field(default_factory=lambda: _env("HOST", "0.0.0.0"))
     port: int = field(default_factory=lambda: int(_env("PORT", "8000")))
 

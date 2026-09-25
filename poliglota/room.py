@@ -25,6 +25,7 @@ from .asr import build_asr
 from .asr.base import Usage
 from .bus import Bus
 from .config import LANGUAGES, settings
+from .gate import SpeechGate
 from .metrics import RoomMetrics
 from .translate import build_translator
 
@@ -56,6 +57,13 @@ class Room:
 
         self.bus = Bus()
         self.metrics = RoomMetrics()
+        # Retiene el silencio para no pagar por transcribir nada. Ante la duda
+        # abre: perder audio cuesta precision, y la precision vale mas.
+        self.gate = SpeechGate(
+            sample_rate=settings.sample_rate,
+            sample_width=settings.sample_width,
+            threshold=settings.vad_threshold,
+        ) if settings.vad_gate else None
         self.glossary = glossary.build(title=title, abstract=abstract, speakers=speakers)
 
         self._asr_name = asr_engine or settings.asr_engine
@@ -147,17 +155,20 @@ class Room:
             return
         self._has_source = True
         self.metrics.note_audio(len(pcm), settings.sample_rate, settings.sample_width)
-        try:
-            self._audio.put_nowait(pcm)
-        except asyncio.QueueFull:
-            # Si el ASR se atrasa, preferimos perder audio viejo antes que
-            # acumular un retraso que crece sin techo frente al orador.
-            self.metrics.dropped_chunks += 1
+
+        for piece in (self.gate.feed(pcm) if self.gate else [pcm]):
+            self.metrics.note_sent(len(piece), settings.sample_rate, settings.sample_width)
             try:
-                self._audio.get_nowait()
-                self._audio.put_nowait(pcm)
-            except (asyncio.QueueEmpty, asyncio.QueueFull):
-                pass
+                self._audio.put_nowait(piece)
+            except asyncio.QueueFull:
+                # Si el ASR se atrasa, preferimos perder audio viejo antes que
+                # acumular un retraso que crece sin techo frente al orador.
+                self.metrics.dropped_chunks += 1
+                try:
+                    self._audio.get_nowait()
+                    self._audio.put_nowait(piece)
+                except (asyncio.QueueEmpty, asyncio.QueueFull):
+                    pass
 
     # ---------- espectadores ----------
 
@@ -331,6 +342,7 @@ class Room:
             "asr": self._asr.name if self._asr else self._asr_name,
             "mt": self._mt.name if self._mt else self._mt_name,
             "glossary_terms": len(self.glossary.split(", ")) if self.glossary else 0,
+            "vad": bool(self.gate),
             "metrics": self.metrics.snapshot(),
         }
 

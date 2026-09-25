@@ -105,12 +105,17 @@ function paint(rooms) {
   const audio = rooms.reduce((a, r) => a + r.metrics.audio_s, 0);
   const refresh = rooms.map(r => r.metrics.refresh_p50).filter(Boolean);
   const live = rooms.filter(r => r.live).length;
+  // Costo de todas las salas juntas por hora, medido sobre consumo real.
+  const costPerHour = rooms.reduce((a, r) => a + (r.metrics.usd_per_hour || 0), 0);
 
   summary.innerHTML = [
     ['salas activas', `${live}<span style="font-size:16px;color:var(--muted)"> / ${rooms.length}</span>`],
     ['espectadores', viewers],
     ['audio procesado', fmt(audio)],
     ['refresco mediano', refresh.length ? Math.round(refresh.reduce((a, b) => a + b) / refresh.length) + ' ms' : '—'],
+    ...(costPerHour > 0
+      ? [['jornada de 8h', '$' + (costPerHour * 8).toFixed(2)]]
+      : []),
   ].map(([label, val]) => `<div class="kpi"><b>${val}</b><span>${label}</span></div>`).join('');
 
   if (!rooms.length) {
@@ -140,12 +145,16 @@ function paint(rooms) {
         <div class="m"><b class="${latClass(m.refresh_p50)}">${m.refresh_p50 ? m.refresh_p50 + ' ms' : '—'}</b><span>refresco</span></div>
         <div class="m"><b class="${latClass(m.ttft_ms)}">${m.ttft_ms ? m.ttft_ms + ' ms' : '—'}</b><span>1er texto</span></div>
         <div class="m"><b class="${m.mt_failures ? 'bad' : ''}">${m.mt_p50 ? m.mt_p50 + ' ms' : '—'}</b><span>traducción</span></div>
-        <div class="m"><b>${m.tokens_per_audio_min || '—'}</b><span>tok/min</span></div>
+        <div class="m">${m.usd_per_hour
+          ? `<b>$${m.usd_per_hour.toFixed(2)}</b><span>por hora</span>`
+          : `<b>${m.tokens_per_audio_min || '—'}</b><span>tok/min</span>`}</div>
       </div>
       <div class="row" style="gap:14px;font-size:11.5px;color:var(--muted);margin:-6px 0 12px">
         <span>${m.segments} frases</span><span>${fmt(m.audio_s)} de audio</span>
         ${m.mt_failures ? `<span style="color:var(--bad)">${m.mt_failures} traducciones caidas</span>` : ''}
         ${m.mt_retries ? `<span style="color:var(--warn)">${m.mt_retries} reintentos</span>` : ''}
+        ${r.vad && m.silence_saved_pct > 0 ? `<span style="color:var(--ok)">${m.silence_saved_pct}% silencio no enviado</span>` : ''}
+        ${m.dropped_chunks ? `<span style="color:var(--warn)">${m.dropped_chunks} fragmentos descartados</span>` : ''}
       </div>
       <div class="langs">${chips}</div>
       <div class="links">

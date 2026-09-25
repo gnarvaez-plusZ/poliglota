@@ -144,6 +144,22 @@ misma frase aparecería cinco veces en pantalla. Cada oración se identifica por
 posición en la charla, así una corrección **actualiza** la línea en vez de
 duplicarla.
 
+**El costo se mide, no se estima.** El panel calcula el gasto por hora de sala
+sobre el consumo real que informa la API, y proyecta la jornada completa del
+evento. La tarifa la carga quien opera (`POLIGLOTA_COST_PER_MTOK`): sin ella el
+panel muestra tokens y no inventa dinero, porque el precio de lista cambia y
+depende del contrato.
+
+**Se puede no pagar el silencio, pero está apagado por defecto.** Hay una
+compuerta de voz (`POLIGLOTA_VAD=1`) que retiene el silencio para no facturar
+transcripciones de nada. Medida sobre habla continua **no ahorra nada**: su
+valor está en la sala abierta sin nadie hablando —armado, cambio de orador,
+coffee break— donde retiene más del 90%. Viene apagada porque toca el camino del
+audio, que es de donde sale la precisión, y ahorrar tokens comiéndose el ataque
+de una palabra sería un mal negocio. Las pruebas verifican que el habla pasa
+byte por byte intacta, con preroll para no perder la primera sílaba y tolerancia
+a las pausas cortas dentro de una frase.
+
 **Se traduce solo a los idiomas con público.** Una sala sin espectadores en
 francés no gasta un token en francés, y todos los idiomas de una frase salen en
 una única llamada: traducir a cinco cuesta casi lo mismo que a uno.
@@ -212,6 +228,7 @@ scripts/feed.py track-2 https://ejemplo.com/stream.m3u8 --lang en
 .venv/bin/python tests/test_live.py        # contra la API real, dos salas, audio real
 .venv/bin/python tests/test_languages.py   # es/en/pt: transcripción y traducción en ambos sentidos
 node tests/test_captions.mjs               # reglas de subtitulado roll-up, con reloj falso
+.venv/bin/python tests/test_gate.py         # compuerta de voz: retiene silencio sin tocar el habla
 ```
 
 ## API
