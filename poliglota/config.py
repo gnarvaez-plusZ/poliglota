@@ -47,6 +47,14 @@ class Settings:
     # una charla sin pausas) y toca el camino del audio, que es de donde sale la
     # precision. Su valor esta en la sala abierta sin nadie hablando: armado,
     # cambio de orador, coffee break. Encenderla para eventos de jornada larga.
+    # Cada cuanto se traduce la frase en curso, en milisegundos. Es lo que
+    # determina si quien lee traducido percibe el subtitulo tan vivo como quien
+    # lee el original. El modelo refresca el original cada ~490 ms; con el
+    # estrangulador en 1500 ms la version traducida iba tres veces mas lenta y
+    # se sentia pesada. Bajarlo cuesta llamadas: cada revision del parcial es
+    # una llamada mas. Subirlo si la cuota da 429.
+    partial_mt_ms: int = field(default_factory=lambda: int(_env("POLIGLOTA_PARTIAL_MT_MS", "600")))
+
     vad_gate: bool = field(default_factory=lambda: _env("POLIGLOTA_VAD", "0") == "1")
     vad_threshold: float = field(default_factory=lambda: float(_env("POLIGLOTA_VAD_THRESHOLD", "0.006")))
     # Precio por millon de tokens, en USD. Queda en cero a proposito: el precio

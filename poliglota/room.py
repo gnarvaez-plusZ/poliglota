@@ -31,7 +31,6 @@ from .translate import build_translator
 
 log = logging.getLogger("poliglota.room")
 
-_PARTIAL_MT_INTERVAL = 1.5   # no traducir parciales mas seguido que esto
 _CONTEXT_SEGMENTS = 3        # cuantos finales previos viajan como contexto
 _FINALS_MEMORY = 400         # lineas recordadas para detectar correcciones
 
@@ -264,7 +263,7 @@ class Room:
 
     def _maybe_translate_partial(self, seq: int) -> None:
         now = time.time()
-        if self._partial_mt_inflight or now - self._last_partial_mt < _PARTIAL_MT_INTERVAL:
+        if self._partial_mt_inflight or now - self._last_partial_mt < settings.partial_mt_ms / 1000:
             return
         targets = self.active_targets()
         if not targets:
