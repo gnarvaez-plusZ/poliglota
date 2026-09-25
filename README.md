@@ -54,6 +54,45 @@ Sobre 50 s de charla técnica real, contra la API de producción:
 
 Reproducibles con `.venv/bin/python tests/test_live.py`.
 
+## Idiomas
+
+**Transcripción verificada en español, inglés y portugués**, más detección
+automática. Se elige por sala; la audiencia elige aparte a qué idioma quiere leer.
+
+| Pista | Idioma declarado | Términos acertados | Primer texto |
+|---|---|---|---|
+| Inglés | `en` | 3/4 | 1,9 s |
+| Español | `es` | 4/4 | 2,5 s |
+| Portugués | `pt` | 4/4 | 1,7 s |
+| Español con jerga en inglés | `es` | 4/4 | 14,0 s |
+| Español con jerga en inglés | `auto` | 4/4 | **1,9 s** |
+
+La última fila es el caso real de una conferencia latinoamericana: el orador
+habla español y dice *retrieval augmented generation*, *bottleneck* y *queue
+depth* en inglés, sin traducirlos. Fijar el idioma funciona, pero **declarar
+`auto` reduce el arranque de 14 s a 1,9 s** en ese audio mezclado. Para una
+charla en Nerdearla, `auto` es la opción sensata.
+
+El único defecto observado con `auto` es que el modelo a veces repite el
+fragmento inicial (*"Buenas a todos. Hoy lesBuenas a todos. Hoy les quiero…"*).
+Se corrige solo en la siguiente revisión de la línea.
+
+La traducción va en **las seis direcciones** entre los tres idiomas, con la jerga
+técnica intacta en todas:
+
+```
+ES → EN   Movimos el paso de embeddings atrás de un tópico de Kafka…
+          We moved the embeddings step behind a Kafka topic and the p99 latency…
+PT → ES   Tudo isso roda em Kubernetes, com um autoscaler horizontal…
+          Todo esto corre en Kubernetes, con un autoscaler horizontal…
+EN → PT   We trace every hop with eBPF and export the spans over gRPC…
+          Rastreamos cada salto com eBPF e exportamos os spans via gRPC…
+```
+
+Reproducible con `.venv/bin/python tests/test_languages.py`. Hay además otros
+tres idiomas de salida configurados (francés, italiano, alemán) que no están
+medidos.
+
 ### Lo que medir cambió respecto del diseño inicial
 
 Tres decisiones del diseño original resultaron equivocadas al contrastarlas
@@ -159,8 +198,9 @@ scripts/feed.py track-2 https://ejemplo.com/stream.m3u8 --lang en
 ## Pruebas
 
 ```bash
-.venv/bin/python tests/test_pipeline.py   # pipeline completo, motor mock, sin credenciales
-.venv/bin/python tests/test_live.py       # contra la API real, dos salas, audio real
+.venv/bin/python tests/test_pipeline.py    # pipeline completo, motor mock, sin credenciales
+.venv/bin/python tests/test_live.py        # contra la API real, dos salas, audio real
+.venv/bin/python tests/test_languages.py   # es/en/pt: transcripción y traducción en ambos sentidos
 ```
 
 ## API

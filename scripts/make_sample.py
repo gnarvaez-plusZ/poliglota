@@ -42,6 +42,32 @@ SCRIPTS = {
         "queue depth rather than CPU, and we trace every hop with eBPF and export the spans over gRPC to "
         "Grafana Tempo. If you take one thing home: measure before you shard."
     ),
+    "pt": (
+        "Leia isto como um palestrante de conferência, em ritmo natural:\n\n"
+        "Bom dia a todos. Hoje eu quero contar o que realmente quebrou quando escalamos "
+        "nosso pipeline de geração aumentada por recuperação para quarenta mil requisições "
+        "por minuto. O primeiro mito que eu quero matar é que o gargalo está no banco de "
+        "dados vetorial. Quase nunca está. No nosso caso a latência p99 era dominada pela "
+        "etapa de embeddings, que rodava de forma síncrona dentro do request. Movemos isso "
+        "para um tópico do Kafka e a p99 caiu de oitocentos milissegundos para noventa. "
+        "Tudo isso roda em Kubernetes, com um autoscaler horizontal guiado por profundidade "
+        "de fila e não por CPU."
+    ),
+    # El caso real de una conferencia latinoamericana: el orador habla espanol y
+    # dice la jerga en ingles sin traducirla. Es donde un reconocedor con un solo
+    # idioma fijado se rompe.
+    "mixto": (
+        "Leé esto como un orador argentino en una conferencia, con ritmo natural. "
+        "Pronunciá los términos técnicos en inglés:\n\n"
+        "Buenas a todos. Hoy les quiero contar qué se rompió cuando escalamos el pipeline "
+        "de retrieval augmented generation. El primer mito que quiero matar es que el "
+        "bottleneck está en la vector database. Casi nunca está ahí. En nuestro caso la "
+        "latencia p99 estaba dominada por el embedding step, que corríamos synchronously "
+        "adentro del request. Lo movimos atrás de un Kafka topic y la p99 bajó de "
+        "ochocientos milisegundos a noventa. Todo esto corre sobre Kubernetes, con un "
+        "horizontal pod autoscaler guiado por queue depth y no por CPU, y trazamos cada "
+        "hop con eBPF mandando los spans por gRPC."
+    ),
     "es": (
         "Leé esto como un orador de conferencia, con ritmo natural:\n\n"
         "Buenos días a todos. Hoy quiero contarles qué se rompió de verdad cuando llevamos nuestro "
@@ -68,6 +94,7 @@ async def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("out", help="archivo .wav de salida")
     ap.add_argument("--lang", default="en", choices=sorted(SCRIPTS))
+    ap.add_argument("--voice-lang", default=None, help="idioma que se le declara al motor (por defecto, --lang)")
     ap.add_argument("--voice", default="Charon", help="voz prearmada de Gemini TTS")
     args = ap.parse_args()
 
