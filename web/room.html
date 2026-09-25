@@ -2,13 +2,20 @@
 <html lang="es">
 <head>
 <meta charset="utf-8">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Políglota · Subtítulos</title>
 <link rel="stylesheet" href="/static/app.css">
 <style>
   body { display: flex; flex-direction: column; height: 100dvh; overflow: hidden; }
   #feed { flex: 1; overflow-y: auto; padding: 28px 20px 40px; scroll-behavior: smooth; }
-  .lines { max-width: 900px; margin: 0 auto; }
+  /* Las lineas se apoyan en el borde inferior y crecen hacia arriba: es donde
+     el ojo espera un subtitulo, y evita que la frase nueva salte por una
+     pantalla vacia mientras la charla arranca. */
+  .lines {
+    max-width: 900px; margin: 0 auto;
+    min-height: 100%; display: flex; flex-direction: column; justify-content: flex-end;
+  }
 
   .line { padding: 12px 0; border-bottom: 1px solid color-mix(in srgb, var(--line) 50%, transparent); }
   .line:last-child { border-bottom: none; }
@@ -24,7 +31,7 @@
   }
   .line .waiting { opacity: .5; font-style: italic; }
 
-  .empty { text-align: center; color: var(--muted); padding: 80px 20px; }
+  .empty { text-align: center; color: var(--muted); padding: 80px 20px; margin: auto 0; }
   .empty h2 { font-weight: 600; margin: 0 0 8px; }
 
   footer.bar {

@@ -206,6 +206,12 @@ async def ws_view(ws: WebSocket, room_id: str) -> None:
 # ---------- UI ----------
 
 
+@app.get("/favicon.ico")
+@app.get("/favicon.svg")
+async def favicon() -> FileResponse:
+    return FileResponse(WEB / "favicon.svg", media_type="image/svg+xml")
+
+
 @app.get("/")
 async def index() -> FileResponse:
     return FileResponse(WEB / "index.html")

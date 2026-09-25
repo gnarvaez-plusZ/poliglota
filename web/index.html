@@ -2,6 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="utf-8">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Políglota · Panel del evento</title>
 <link rel="stylesheet" href="/static/app.css">
@@ -16,12 +17,14 @@
   .room .id { font-family: var(--mono); font-size: 11px; color: var(--muted); }
   .grid4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 14px 0; }
   .m { background: var(--panel-2); border-radius: 8px; padding: 8px 9px; text-align: center; }
-  .m b { display: block; font-family: var(--mono); font-size: 15px; }
-  .m span { font-size: 9.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
+  .m b { display: block; font-family: var(--mono); font-size: 14px; white-space: nowrap; }
+  .m span { font-size: 9.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .02em;
+           display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .m b.ok { color: var(--ok); } .m b.warn { color: var(--warn); } .m b.bad { color: var(--bad); }
   .langs { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 12px; min-height: 22px; }
   .lchip { font-size: 11px; font-weight: 600; background: var(--panel-2); border-radius: 99px; padding: 3px 9px; }
-  .links { display: flex; gap: 7px; flex-wrap: wrap; }
+  .links { display: flex; gap: 7px; flex-wrap: wrap; align-items: center; }
+  .links button.danger { margin-left: auto; }
   .links .btn { padding: 6px 11px; font-size: 12.5px; }
   .empty { text-align: center; padding: 56px 20px; color: var(--muted); }
   dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: var(--radius); padding: 22px; max-width: 460px; width: 92vw; }
@@ -134,10 +137,10 @@ function paint(rooms) {
         <span class="pill ${r.live ? 'live' : 'idle'}">${r.live ? '● en vivo' : 'sin audio'}</span>
       </div>
       <div class="grid4">
-        <div class="m"><b class="${latClass(m.refresh_p50)}">${m.refresh_p50 || '—'}</b><span>refresco ms</span></div>
-        <div class="m"><b class="${latClass(m.ttft_ms)}">${m.ttft_ms || '—'}</b><span>1er texto ms</span></div>
-        <div class="m"><b class="${m.mt_failures ? 'bad' : ''}">${m.mt_p50 || '—'}</b><span>traducc. ms</span></div>
-        <div class="m"><b>${m.tokens_per_audio_min || '—'}</b><span>tok/min audio</span></div>
+        <div class="m"><b class="${latClass(m.refresh_p50)}">${m.refresh_p50 ? m.refresh_p50 + ' ms' : '—'}</b><span>refresco</span></div>
+        <div class="m"><b class="${latClass(m.ttft_ms)}">${m.ttft_ms ? m.ttft_ms + ' ms' : '—'}</b><span>1er texto</span></div>
+        <div class="m"><b class="${m.mt_failures ? 'bad' : ''}">${m.mt_p50 ? m.mt_p50 + ' ms' : '—'}</b><span>traducción</span></div>
+        <div class="m"><b>${m.tokens_per_audio_min || '—'}</b><span>tok/min</span></div>
       </div>
       <div class="row" style="gap:14px;font-size:11.5px;color:var(--muted);margin:-6px 0 12px">
         <span>${m.segments} frases</span><span>${fmt(m.audio_s)} de audio</span>
