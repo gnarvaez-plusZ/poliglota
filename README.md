@@ -123,6 +123,16 @@ audio descartado se reporta en el panel para que el operador se entere.
 
 ## Decisiones de diseño
 
+**Los subtítulos se leen como subtítulos.** El overlay usa el patrón *roll-up*
+de la televisión en vivo: dos líneas firmes arriba y la frase en curso abajo,
+cortadas a 42 caracteres. La regla que casi nunca se implementa es el **tiempo
+mínimo en pantalla** —15 caracteres por segundo, con un piso de 1,5 s— sin el
+cual tres frases seguidas del orador borran la primera antes de que nadie la
+haya leído. Cuando el orador va más rápido de lo que se puede leer, la cola se
+llena y el sistema abandona ese mínimo para no quedar atrás: ir al día importa
+más, y lo salteado sigue en el panel completo. Tras unos segundos de silencio el
+historial se oculta, para que texto viejo no parezca actual.
+
 **El original no espera a la traducción.** El texto en el idioma de origen se
 publica apenas sale del reconocedor; la traducción llega después como un parche
 sobre el mismo número de línea. El subtítulo aparece a la velocidad del
@@ -201,6 +211,7 @@ scripts/feed.py track-2 https://ejemplo.com/stream.m3u8 --lang en
 .venv/bin/python tests/test_pipeline.py    # pipeline completo, motor mock, sin credenciales
 .venv/bin/python tests/test_live.py        # contra la API real, dos salas, audio real
 .venv/bin/python tests/test_languages.py   # es/en/pt: transcripción y traducción en ambos sentidos
+node tests/test_captions.mjs               # reglas de subtitulado roll-up, con reloj falso
 ```
 
 ## API

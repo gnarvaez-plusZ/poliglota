@@ -25,8 +25,11 @@
     animation: rise .18s ease-out;
   }
   .line.pending { opacity: .82; }
-  .line.src { font-size: .62em; font-weight: 500; opacity: .72; }
+  /* Desplazamiento corto al subir una línea: ayuda a seguir la lectura sin
+     distraer. Se anula para quien pidió menos movimiento en su sistema. */
   @keyframes rise { from { opacity: 0; transform: translateY(9px); } }
+  @media (prefers-reduced-motion: reduce) { .line { animation: none; } }
+  .line.src { font-size: .62em; font-weight: 500; opacity: .72; }
   body.clean .line { background: none; }
 </style>
 </head>
@@ -42,8 +45,27 @@ const MAX = Math.max(1, parseInt(p.get('lines') || '2', 10));
 const showSrc = p.get('src') === '1';
 if (p.get('clean') === '1') document.body.classList.add('clean');
 
-let sourceLang = 'en', rows = new Map(), ws;
+import { CaptionBuffer } from '/static/captions.js';
+
+let sourceLang = 'en', ws;
 const box = document.getElementById('box');
+
+// Roll-up: dos líneas firmes arriba y la frase en curso abajo. El buffer se
+// encarga del corte a 42 caracteres, del tiempo mínimo de lectura y de ocultar
+// el historial cuando el orador se calla.
+const captions = new CaptionBuffer({
+  maxHistory: MAX,
+  maxChars: parseInt(p.get('chars') || '42', 10),
+  idleMs: parseInt(p.get('idle') || '6000', 10),
+  onRender: render,
+});
+// El tiempo mínimo de lectura sólo avanza con el reloj, no con texto nuevo:
+// sin este latido, la última línea se quedaría clavada en pantalla.
+setInterval(() => captions.tick(), 250);
+
+// Qué línea del motor corresponde a cada línea en pantalla, para que una
+// corrección del modelo actualice la que ya se está leyendo.
+const placed = new Map();
 
 function connect() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -52,46 +74,61 @@ function connect() {
   ws.onclose = () => setTimeout(connect, 1500);
 }
 
+function pick(ev, textKey) {
+  if (lang === sourceLang) return ev[textKey];
+  return null;
+}
+
 function handle(ev) {
   if (ev.type === 'state') { sourceLang = ev.source_lang || sourceLang; return; }
+
   if (ev.type === 'translation') {
-    const row = rows.get(ev.final ? ev.seq : 'partial');
-    if (row) { row.tr = { ...row.tr, ...ev.tr }; render(); }
+    const text = ev.tr[lang];
+    if (!text) return;
+    if (ev.final) {
+      if (placed.has(ev.seq)) captions.revise(placed.get(ev.seq), text);
+      else commit(ev.seq, text);
+    } else {
+      captions.setPartial(text);
+    }
     return;
   }
+
   if (ev.type !== 'segment') return;
-
-  if (ev.final) rows.delete('partial');
-  const key = ev.final ? ev.seq : 'partial';
-  const row = rows.get(key) || { tr: {} };
-  row.text = ev.text;
-  row.final = ev.final;
-  rows.set(key, row);
-
-  // Solo sobreviven las ultimas MAX lineas: un overlay que crece tapa al orador.
-  const keys = [...rows.keys()];
-  for (const k of keys.slice(0, Math.max(0, keys.length - MAX))) rows.delete(k);
-  render();
+  // Con traducción activa esperamos el texto traducido; en el idioma original
+  // el segmento ya es lo que hay que mostrar.
+  if (lang !== sourceLang) {
+    if (!ev.final) captions.setPartial(ev.text);   // original atenuado mientras llega
+    return;
+  }
+  if (ev.final) commit(ev.seq, ev.text, ev.speaker);
+  else captions.setPartial(ev.text, ev.speaker);
 }
 
-function render() {
+function commit(seq, text, speaker) {
+  if (placed.has(seq)) { captions.revise(placed.get(seq), text); return; }
+  captions.commit(text, speaker || null);
+  const shown = captions.visible.history;
+  if (shown.length) placed.set(seq, shown[shown.length - 1].index);
+}
+
+function render({ history, partial }) {
   box.innerHTML = '';
-  for (const row of rows.values()) {
-    const main = lang === sourceLang ? row.text : (row.tr[lang] ?? row.text);
+  for (const line of history) {
     const el = document.createElement('div');
-    el.className = 'line' + (row.final ? '' : ' pending');
-    el.textContent = main;
+    el.className = 'line';
+    el.textContent = line.text;
     box.appendChild(el);
     box.appendChild(document.createElement('br'));
-    if (showSrc && lang !== sourceLang && row.tr[lang]) {
-      const s = document.createElement('div');
-      s.className = 'line src';
-      s.textContent = row.text;
-      box.appendChild(s);
-      box.appendChild(document.createElement('br'));
-    }
+  }
+  if (partial) {
+    const el = document.createElement('div');
+    el.className = 'line pending';
+    el.textContent = partial;
+    box.appendChild(el);
   }
 }
+
 connect();
 </script>
 </body>
