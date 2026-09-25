@@ -160,7 +160,8 @@ function paint(rooms) {
       <div class="links">
         <a class="btn" href="/capture/${r.room}" target="_blank">🎙️ Capturar</a>
         <a class="btn" href="/room/${r.room}" target="_blank">Subtítulos</a>
-        <a class="btn" href="/overlay/${r.room}" target="_blank">Overlay</a>
+        <a class="btn" href="/overlay/${r.room}?qr=1" target="_blank">Overlay</a>
+        <a class="btn" href="/qr/${r.room}" target="_blank" title="Proyectar en la sala">QR</a>
         <button class="danger" data-del="${esc(r.room)}">Cerrar</button>
       </div>
     </div>`;

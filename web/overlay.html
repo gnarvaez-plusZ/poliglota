@@ -31,10 +31,26 @@
   @media (prefers-reduced-motion: reduce) { .line { animation: none; } }
   .line.src { font-size: .62em; font-weight: 500; opacity: .72; }
   body.clean .line { background: none; }
+
+  /* QR para la audiencia: se proyecta con la charla y cada quien se lleva los
+     subtítulos al teléfono en su idioma. Discreto para no competir con el
+     orador, pero legible desde las últimas filas. */
+  #qr {
+    position: fixed; right: 2.2vw; bottom: 2.2vh;
+    background: #fff; padding: 10px 10px 6px; border-radius: 10px;
+    display: none; text-align: center;
+  }
+  #qr img { display: block; width: 116px; height: 116px; }
+  #qr span {
+    display: block; margin-top: 5px; font-size: 10px; font-weight: 700;
+    color: #0b0d12; letter-spacing: .02em; text-transform: uppercase;
+  }
+  body.qr #qr { display: block; }
 </style>
 </head>
 <body>
 <div id="box"></div>
+<div id="qr"><img alt="Código QR para ver los subtítulos en el teléfono"><span>Subtítulos en tu idioma</span></div>
 <script type="module">
 const room = decodeURIComponent(location.pathname.split('/').pop());
 const p = new URLSearchParams(location.search);
@@ -44,6 +60,11 @@ const lang = p.get('lang') || 'es';
 const MAX = Math.max(1, parseInt(p.get('lines') || '2', 10));
 const showSrc = p.get('src') === '1';
 if (p.get('clean') === '1') document.body.classList.add('clean');
+// ?qr=1 muestra el código para que la audiencia lea en su propio idioma.
+if (p.get('qr') === '1') {
+  document.body.classList.add('qr');
+  document.querySelector('#qr img').src = `/qr/${room}`;
+}
 
 import { CaptionBuffer } from '/static/captions.js';
 

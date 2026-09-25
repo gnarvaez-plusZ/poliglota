@@ -123,6 +123,14 @@ audio descartado se reporta en el panel para que el operador se entere.
 
 ## Decisiones de diseño
 
+**Cada asistente lee en su idioma, sin instalar nada.** El overlay proyectado en
+la sala lleva un QR (`/overlay/{sala}?qr=1`). Quien lo escanea abre los
+subtítulos en su teléfono y elige su idioma ahí. Es la diferencia entre una
+pantalla única que obliga a todos al mismo idioma y que cada persona lea en el
+suyo, que es justamente el problema que el sistema vino a resolver. El código se
+arma con el host por el que entró el pedido, así apunta a la IP de la red del
+evento y no a `localhost`.
+
 **Los subtítulos se leen como subtítulos.** El overlay usa el patrón *roll-up*
 de la televisión en vivo: dos líneas firmes arriba y la frase en curso abajo,
 cortadas a 42 caracteres. La regla que casi nunca se implementa es el **tiempo
@@ -213,7 +221,8 @@ Una sola: `GEMINI_API_KEY`, de Google AI Studio. En modo local
 | `/` | Operador del evento: todas las salas, métricas en vivo |
 | `/capture/{sala}` | Cabina de sonido: captura micrófono o pestaña |
 | `/room/{sala}` | Asistente: subtítulos con selector de idioma |
-| `/overlay/{sala}` | OBS: overlay transparente para el stream |
+| `/overlay/{sala}?qr=1` | OBS o proyector de sala: overlay transparente con QR |
+| `/qr/{sala}` | QR suelto, para proyectar o imprimir |
 
 ```bash
 scripts/demo.sh                               # dos salas simuladas, sin credenciales

@@ -18,7 +18,7 @@ import logging
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -204,6 +204,36 @@ async def ws_view(ws: WebSocket, room_id: str) -> None:
 
 
 # ---------- UI ----------
+
+
+@app.get("/qr/{room_id}")
+async def qr(room_id: str, request: Request) -> Response:
+    """QR que lleva a la vista de subtitulos de la sala.
+
+    Se proyecta en la pantalla de la sala o se pone en el overlay del stream.
+    El asistente lo escanea y se lleva los subtitulos al telefono, en el idioma
+    que quiera, sin instalar nada. Es la diferencia entre una pantalla comun
+    para todos y que cada uno lea en su idioma.
+
+    La URL se arma con el host por el que entro el pedido, para que el codigo
+    apunte a la IP de la red del evento y no a `localhost`.
+    """
+    import io
+    import qrcode
+    import qrcode.image.svg
+
+    base = str(request.base_url).rstrip("/")
+    lang = request.query_params.get("lang")
+    target = f"{base}/room/{room_id}" + (f"?lang={lang}" if lang else "")
+
+    img = qrcode.make(target, image_factory=qrcode.image.svg.SvgPathImage, box_size=10, border=2)
+    buf = io.BytesIO()
+    img.save(buf)
+    return Response(
+        content=buf.getvalue(),
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "public, max-age=3600", "X-Poliglota-Target": target},
+    )
 
 
 @app.get("/favicon.ico")
