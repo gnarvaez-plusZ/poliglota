@@ -186,3 +186,13 @@ mostraba. Se prefiere reportar menos y que sea cierto.
 ## Licencia
 
 Apache-2.0. Ver [LICENSE](LICENSE).
+
+## Audio de prueba
+
+Los archivos de `samples/` no se versionan. Para generar una pista de charla
+técnica con la que probar el pipeline:
+
+```bash
+scripts/make_sample.py samples/charla-en.wav --lang en
+ffmpeg -i samples/charla-en.wav -ac 1 -ar 16000 -f s16le samples/charla-full.raw
+```
