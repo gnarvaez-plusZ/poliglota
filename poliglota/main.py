@@ -124,6 +124,11 @@ async def ws_ingest(ws: WebSocket, room_id: str) -> None:
     if room is None:
         room = await rooms.create(room_id, title=room_id)
     await ws.send_text(json.dumps({"type": "ready", "room": room.id}))
+    # Se probo precalentar la sesion con el modelo empujando 100 ms de
+    # silencio al abrir el socket, para sacar el apreton de manos del camino
+    # del primer subtitulo. La medicion salio peor (12 s contra 2,8 s) y no se
+    # pudo separar el efecto del cambio de la degradacion de la API en ese
+    # momento. Ante la duda, no se hace: el motor conecta con la primera palabra.
 
     try:
         while True:
@@ -242,24 +247,35 @@ async def favicon() -> FileResponse:
     return FileResponse(WEB / "favicon.svg", media_type="image/svg+xml")
 
 
+# Las paginas se sirven con `no-cache`: el navegador las revalida en cada
+# carga. Sin esto, un arreglo publicado en el servidor podia no llegar a la
+# cabina de sonido porque su navegador seguia usando la copia vieja, y la
+# unica pista era "sigue lento".
+_PAGE_HEADERS = {"Cache-Control": "no-cache"}
+
+
+def _page(name: str) -> FileResponse:
+    return FileResponse(WEB / name, headers=_PAGE_HEADERS)
+
+
 @app.get("/")
 async def index() -> FileResponse:
-    return FileResponse(WEB / "index.html")
+    return _page("index.html")
 
 
 @app.get("/room/{room_id}")
 async def room_page(room_id: str) -> FileResponse:
-    return FileResponse(WEB / "room.html")
+    return _page("room.html")
 
 
 @app.get("/overlay/{room_id}")
 async def overlay_page(room_id: str) -> FileResponse:
-    return FileResponse(WEB / "overlay.html")
+    return _page("overlay.html")
 
 
 @app.get("/capture/{room_id}")
 async def capture_page(room_id: str) -> FileResponse:
-    return FileResponse(WEB / "capture.html")
+    return _page("capture.html")
 
 
 app.mount("/static", StaticFiles(directory=WEB), name="static")

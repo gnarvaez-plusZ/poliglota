@@ -90,7 +90,10 @@
 <script type="module">
 const room = decodeURIComponent(location.pathname.split('/').pop());
 const SAMPLE_RATE = 16000;
-// 100 ms por envío: 10 mensajes por segundo en vez de 125.
+// 100 ms por envío: 10 mensajes por segundo, el mismo ritmo que el alimentador
+// por ffmpeg, que es el único valor medido con buen resultado. Con 50 ms (20/s)
+// la latencia empeoró en la prueba; no está claro si fue la API o el ritmo, y
+// ante la duda se conserva el valor probado.
 const FRAME_SAMPLES = SAMPLE_RATE / 10;
 roomName.textContent = room;
 linkView.href = `/room/${room}`;
@@ -103,8 +106,7 @@ let ws, ctx, node, stream, sent = 0;
 const workletSource = `
 // El worklet entrega bloques de 128 muestras: a 16 kHz son 8 ms. Mandarlos de a
 // uno serían 125 mensajes por segundo, y cada uno termina en una llamada aparte
-// a la API, que se atraganta. Se acumulan hasta 100 ms —el mismo tamaño que usa
-// el alimentador por ffmpeg— antes de enviarlos.
+// a la API, que se atraganta. Se acumulan hasta 100 ms antes de enviarlos.
 const FRAME = ${FRAME_SAMPLES};
 
 class Pcm extends AudioWorkletProcessor {
