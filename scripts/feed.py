@@ -28,6 +28,27 @@ SAMPLE_RATE = 16000
 CHUNK = 3200  # 100 ms de PCM16 a 16 kHz
 
 
+def default_monitor() -> str | None:
+    """Nombre del monitor del dispositivo de salida por defecto.
+
+    El "monitor" es lo que suena por los parlantes. Capturarlo permite
+    alimentar una sala con cualquier cosa que reproduzca la maquina —una charla
+    en el navegador, un archivo, una videollamada— sin depender de que el
+    navegador sepa compartir audio de pestana, que en Firefox no se puede.
+    """
+    import shutil
+    import subprocess
+
+    if not shutil.which("pactl"):
+        return None
+    try:
+        sink = subprocess.run(["pactl", "get-default-sink"], capture_output=True,
+                              text=True, timeout=5).stdout.strip()
+        return f"{sink}.monitor" if sink else None
+    except Exception:
+        return None
+
+
 def build_ffmpeg(source: str, device: str | None, realtime: bool) -> list[str]:
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error"]
     if device:
@@ -48,7 +69,16 @@ async def run(args: argparse.Namespace) -> int:
     host = args.server.split("://", 1)[-1].rstrip("/")
     url = f"{scheme}://{host}/ws/ingest/{args.room}"
 
-    cmd = build_ffmpeg(args.source, args.device, not args.fast)
+    source = args.source
+    if args.device == "pulse" and source in ("default", "monitor", "sistema"):
+        source = default_monitor()
+        if not source:
+            print("No se pudo detectar la salida de audio por defecto. "
+                  "Listala con:  pactl list short sources | grep monitor", file=sys.stderr)
+            return 1
+        print(f"-> capturando el audio del sistema: {source}")
+
+    cmd = build_ffmpeg(source, args.device, not args.fast)
     proc = await asyncio.create_subprocess_exec(
         *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
     )
@@ -65,7 +95,7 @@ async def run(args: argparse.Namespace) -> int:
                 "abstract": args.abstract,
                 "source_lang": args.lang,
             }))
-            print(f"-> {args.room}: alimentando desde {args.source}")
+            print(f"-> {args.room}: alimentando desde {source}")
 
             while True:
                 chunk = await proc.stdout.read(CHUNK)
@@ -99,7 +129,8 @@ async def run(args: argparse.Namespace) -> int:
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("room", help="identificador de la sala")
-    p.add_argument("source", help="archivo, URL, stream, o nombre de dispositivo")
+    p.add_argument("source", help="archivo, URL, stream, o 'default' con --device pulse "
+                                  "para capturar lo que suene en la maquina")
     p.add_argument("--server", default="http://localhost:8000")
     p.add_argument("--lang", default="en", help="idioma del orador (o 'auto')")
     p.add_argument("--title", default="", help="titulo de la charla: alimenta el glosario")

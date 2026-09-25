@@ -228,6 +228,11 @@ Una sola: `GEMINI_API_KEY`, de Google AI Studio. En modo local
 scripts/demo.sh                               # dos salas simuladas, sin credenciales
 scripts/feed.py auditorio charla.mp4 --lang en --title "Scaling RAG"
 scripts/feed.py track-2 https://ejemplo.com/stream.m3u8 --lang en
+
+# Capturar lo que suene en la máquina: sirve para alimentar una sala desde el
+# navegador, una videollamada o la consola de sonido, sin depender de que el
+# navegador sepa compartir audio de pestaña (Firefox no puede).
+scripts/feed.py auditorio default --device pulse --lang auto
 ```
 
 ## Pruebas
